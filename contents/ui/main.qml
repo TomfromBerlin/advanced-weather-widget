@@ -2120,7 +2120,7 @@ PlasmoidItem {
         // Only the 32 px variants are requested - every size folder holds the same
         // artwork (identical viewBox), they differ only by the SVG width attribute,
         // and Kirigami.Icon sizes the result itself.
-        if (style === "symbolic-bundled" || style === "flat-color" || style === "3d-oxygen") {
+        if (style === "symbolic-bundled" || style === "flat-color" || style === "3d-oxygen" || style === "meteocons") {
             var bundledTheme = (style === "symbolic-bundled") ? "symbolic" : style;
             return IconResolver.svgUrl(IconResolver._conditionSvgStem(code, night), 32, _iconsBaseDir, bundledTheme);
         }
@@ -2537,6 +2537,9 @@ PlasmoidItem {
             var moonStem = Moon.moonPhaseSvgStem(Moon.moonAgeFromPhase(SC.getMoonIllumination(new Date()).phase));
             return IconResolver.resolveMoonPhase(moonStem, iconSz, _iconsBaseDir, svgTheme);
         }
+
+        // Meteocons wind item: directional compass icon (static for all other themes)
+        if (tok === "wind") return IconResolver.resolveWindDirection(W.windDirectionCompassStem(windDirection), iconSz, _iconsBaseDir, svgTheme);
 
         // Standard items: temperature, humidity, pressure, wind, location, etc.
         return IconResolver.resolve(tok, iconSz, _iconsBaseDir, svgTheme);

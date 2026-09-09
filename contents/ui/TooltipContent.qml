@@ -21,7 +21,7 @@
  * Renders the rich tooltip with configurable icon themes + data values.
  * Receives weatherRoot to access live weather data and helper functions.
  * Supports the same icon themes as the Panel: wi-font, symbolic, flat-color,
- * 3d-oxygen, kde, and custom (user-picked KDE icons per item).
+ * 3d-oxygen, meteocons, kde, and custom (user-picked KDE icons per item).
  */
 
 import QtQuick
@@ -205,6 +205,11 @@ Item {
             return IconResolver.resolve("moonrise", ttIconSize, ttRoot.iconsBaseDir, svgTheme);
         if (tok === "moonphase-moonset")
             return IconResolver.resolve("moonset", ttIconSize, ttRoot.iconsBaseDir, svgTheme);
+        // Meteocons wind item: directional compass icon (static for all other themes)
+        if (tok === "wind") {
+            var windStem = W.windDirectionCompassStem(weatherRoot ? weatherRoot.windDirection : NaN);
+            return IconResolver.resolveWindDirection(windStem, ttIconSize, ttRoot.iconsBaseDir, svgTheme);
+        }
 
         return IconResolver.resolve(tok, ttIconSize, ttRoot.iconsBaseDir, svgTheme);
     }
