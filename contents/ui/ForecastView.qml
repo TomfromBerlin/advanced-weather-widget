@@ -446,24 +446,29 @@ Item {
                     readonly property bool _dayOutsideAemetHourlyRange: {
                         if ((Plasmoid.configuration.weatherProvider || "adaptive") !== "aemet")
                             return false;
-                        var ds = (weatherRoot && weatherRoot.dailyData[dataIndex])
-                            ? (weatherRoot.dailyData[dataIndex].dateStr || "") : "";
-                        if (!ds)
+                        if (!weatherRoot || !weatherRoot.dailyData || !weatherRoot.dailyData[0] || !weatherRoot.dailyData[dataIndex])
                             return false;
-                        var parts = ds.split("-");
-                        if (parts.length < 3)
+                        // AEMET's "horaria" product covers today + tomorrow BY
+                        // CALENDAR DAY - day 3 onward has only the 7-day "diaria"
+                        // summary, with no hourly breakdown. This used to compare
+                        // the day's midnight against a rolling (now + 48h), which
+                        // is wrong at every hour of the day: day+2's midnight is
+                        // always earlier than now+48h, so the third day was never
+                        // flagged and sat on "Loading hourly data…" forever even
+                        // though there was nothing to load. Compare calendar dates
+                        // instead, relative to the forecast's own "today"
+                        // (dailyData[0] - AEMET's own local date, the same source
+                        // as every row's dateStr) rather than the device clock, so
+                        // a device/municipality timezone difference can't shift it.
+                        var todayParts = (weatherRoot.dailyData[0].dateStr || "").split("-");
+                        var dayParts = (weatherRoot.dailyData[dataIndex].dateStr || "").split("-");
+                        if (todayParts.length < 3 || dayParts.length < 3)
                             return false;
-                        var year = parseInt(parts[0], 10);
-                        var month = parseInt(parts[1], 10) - 1;
-                        var day = parseInt(parts[2], 10);
-                        if (isNaN(year) || isNaN(month) || isNaN(day))
+                        var todayUtc = Date.UTC(parseInt(todayParts[0], 10), parseInt(todayParts[1], 10) - 1, parseInt(todayParts[2], 10));
+                        var dayUtc = Date.UTC(parseInt(dayParts[0], 10), parseInt(dayParts[1], 10) - 1, parseInt(dayParts[2], 10));
+                        if (isNaN(todayUtc) || isNaN(dayUtc))
                             return false;
-                        var dayStartMs = new Date(year, month, day, 0, 0, 0, 0).getTime();
-                        // AEMET's "horaria" product only covers today + tomorrow
-                        // (~48h) - day 3 onward has only the 7-day "diaria"
-                        // summary, with no hourly breakdown.
-                        var hourlyLimitMs = (new Date()).getTime() + 48 * 3600 * 1000;
-                        return dayStartMs >= hourlyLimitMs;
+                        return Math.round((dayUtc - todayUtc) / 86400000) >= 2;
                     }
 
                     readonly property bool _dayIsLoading: {

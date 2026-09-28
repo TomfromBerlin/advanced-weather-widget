@@ -330,20 +330,34 @@ function _nextDateStr(dateStr) {
 // ── Client-side request budget (defends against 429s) ────────────────────
 
 /**
- * AEMET's own limit is ~50 req/min per key. This widget's own worst case -
- * both products (daily+hourly, each a two-hop request) failing and each hop
- * retrying once via _fetchAemetJsonR - is 8 requests per refresh attempt;
- * repeated every 15 s by the old fixed-interval auto-retry that used to sit
- * in WeatherService.qml, that alone reached ~32 req/min from this widget
- * doing nothing but retrying itself, before any other instance or a normal
- * refresh schedule added anything on top. Capping requests actually sent in
- * any trailing 60 s window - refusing the rest as a synthetic rate limit
- * rather than sending them anyway - keeps this widget from ever being the
- * one pushing its own key over the edge. 40 (not 50) leaves headroom for
- * one other consumer of the same key (e.g. a second panel instance, or the
- * person's own manual testing) sharing the quota.
+ * AEMET's currently documented account-wide limit is 40 req/min per key
+ * (confirmed against its published FAQ), "with possible additional
+ * restrictions per resource" - i.e. this specific forecast endpoint could
+ * be capped lower than the account-wide figure, and AEMET doesn't publish
+ * that narrower number. A real-world test still got an immediate 429 on
+ * every hop after a full 5-minute idle wait, which a clean 40/min sliding
+ * window starting from zero shouldn't produce - consistent with either a
+ * stricter per-resource cap, a longer-than-60s cooldown once triggered, or
+ * another consumer of the same key (another instance of this widget on a
+ * second panel/desktop, each with its own independent budget here, since
+ * this tracks requests per WeatherService instance, not per AEMET account).
+ *
+ * This widget's own worst case - both products (daily+hourly, each a
+ * two-hop request) failing and each hop retrying once via _fetchAemetJsonR -
+ * is 8 requests per refresh attempt; repeated every 15 s by the old
+ * fixed-interval auto-retry that used to sit in WeatherService.qml, that
+ * alone reached ~32 req/min from this widget doing nothing but retrying
+ * itself. Capping requests actually sent in any trailing 60 s window -
+ * refusing the rest as a synthetic rate limit rather than sending them
+ * anyway - keeps this widget from ever being the one pushing its own key
+ * over the edge. Set well under the documented 40 (not just under it) since
+ * a normal refresh only ever needs 4 requests every 15-20 minutes regardless -
+ * this budget exists purely to cap pathological retry storms, not to permit
+ * legitimate headroom up to the documented limit, so there's no cost to
+ * setting it low and real margin to gain if the per-resource cap turns out
+ * to be tighter than 40.
  */
-var AEMET_REQUEST_BUDGET_PER_MIN = 40;
+var AEMET_REQUEST_BUDGET_PER_MIN = 16;
 
 /** True if sending one more request now would stay within budget. Also
  *  prunes the log to the last 60 s as a side effect, so the array on
@@ -390,6 +404,23 @@ function _redactKey(url) {
     return String(url).replace(/([?&]api_key=)[^&]+/i, "$1<redacted>");
 }
 
+// AEMET's own documented limit is 40 req/min account-wide, "with possible
+// additional restrictions per resource" (per its published FAQ) - i.e. this
+// specific forecast endpoint could have a stricter cap than the account-wide
+// figure, undocumented as to its exact value. If AEMET sends a Retry-After
+// header on a 429, that is ground truth for how long IT thinks the block
+// lasts - far better than guessing from AEMET_AUTO_RETRY's own backoff
+// schedule. Logged so a real value shows up next time this happens instead
+// of us continuing to infer purely from wait-and-see reports.
+function _retryAfterSeconds(xhr) {
+    try {
+        var v = xhr.getResponseHeader("Retry-After");
+        if (!v) return null;
+        var n = parseInt(v, 10);
+        return isNaN(n) ? null : n;
+    } catch (e) { return null; }
+}
+
 function _fetchAemetJson(url, service, cb) {
     if (!_aemetBudgetOk(service)) {
         // Treat exactly like a real 429: AEMET would very likely reject this
@@ -409,7 +440,7 @@ function _fetchAemetJson(url, service, cb) {
     meta.onreadystatechange = function () {
         if (meta.readyState !== XMLHttpRequest.DONE) return;
         if (meta.status === 429) {
-            console.warn("[aemet] HTTP 429 (rate limited) on first hop:", _redactKey(url));
+            console.warn("[aemet] HTTP 429 (rate limited) on first hop:", _redactKey(url), "- Retry-After:", _retryAfterSeconds(meta), "s (null = header not sent)");
             service._aemetRateLimited = true; service.weatherRoot.aemetRateLimited = true; cb(null); return;
         }
         if (meta.status !== 200) {
@@ -454,7 +485,7 @@ function _fetchAemetJson(url, service, cb) {
         data.onreadystatechange = function () {
             if (data.readyState !== XMLHttpRequest.DONE) return;
             if (data.status === 429) {
-                console.warn("[aemet] HTTP 429 (rate limited) on second hop:", ptr.datos);
+                console.warn("[aemet] HTTP 429 (rate limited) on second hop:", ptr.datos, "- Retry-After:", _retryAfterSeconds(data), "s (null = header not sent)");
                 service._aemetRateLimited = true; service.weatherRoot.aemetRateLimited = true; cb(null); return;
             }
             if (data.status !== 200) {
