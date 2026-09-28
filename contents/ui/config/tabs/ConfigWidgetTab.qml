@@ -70,6 +70,19 @@ ColumnLayout {
         return 0;
     }
 
+    // Refresh both icon theme combos (General > Weather icon theme, Details >
+    // Icon theme) after the icon theme scope dialog (configAppearance.qml)
+    // applied a theme from another tab, or was cancelled.
+    Connections {
+        target: widgetTab.configRoot
+        function onIconThemesSynced() {
+            conditionIconThemeCombo.currentIndex = widgetTab.findConditionThemeIndex(
+                widgetTab.configRoot.cfg_conditionIconTheme);
+            widgetIconThemeCombo.currentIndex = widgetTab.findThemeIndex(
+                widgetTab.configRoot.cfg_widgetIconTheme);
+        }
+    }
+
     PlasmaComponents.TabBar {
         id: subTabBar
         Layout.fillWidth: true
@@ -144,7 +157,11 @@ ColumnLayout {
                     model: widgetTab.conditionIconThemeModel
                     Component.onCompleted: currentIndex = widgetTab.findConditionThemeIndex(
                         widgetTab.configRoot.cfg_conditionIconTheme)
-                    onActivated: widgetTab.configRoot.cfg_conditionIconTheme = model[currentIndex].value
+                    // Asks "Apply everywhere / only here / Cancel" when the theme also
+                    // exists in other icon theme settings (see configAppearance.qml).
+                    // "KDE Symbolic" and "Custom…" are specific to this combo and
+                    // are applied directly, exactly as before.
+                    onActivated: widgetTab.configRoot.requestIconTheme("condition", model[currentIndex].value)
                 }
             }
             Button {
@@ -531,7 +548,9 @@ ColumnLayout {
                     model: widgetTab.iconThemeModel
                     Component.onCompleted: currentIndex = widgetTab.findThemeIndex(
                         widgetTab.configRoot.cfg_widgetIconTheme)
-                    onActivated: widgetTab.configRoot.cfg_widgetIconTheme = model[currentIndex].value
+                    // Asks "Apply everywhere / only here / Cancel" when the theme also
+                    // exists in other icon theme settings (see configAppearance.qml).
+                    onActivated: widgetTab.configRoot.requestIconTheme("details", model[currentIndex].value)
                 }
                 Label {
                     text: i18n("Size:")

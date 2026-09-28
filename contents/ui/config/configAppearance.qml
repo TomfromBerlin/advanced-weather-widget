@@ -68,6 +68,347 @@ KCM.AbstractKCM {
         return false;
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // ICON THEME SYNC - "Apply everywhere" / "Apply only here" / "Cancel"
+    // ══════════════════════════════════════════════════════════════════════
+    // Four settings pick an icon theme, each with its own stored values:
+    //   Panel / System tray   cfg_panelIconTheme      (ConfigPanelTab)
+    //   Widget > General      cfg_conditionIconTheme  "Weather icon theme"
+    //   Widget > Details      cfg_widgetIconTheme     (both: ConfigWidgetTab)
+    //   Tooltip               cfg_tooltipIconTheme    (ConfigTooltipTab)
+    //
+    // Each combo calls requestIconTheme() instead of writing its cfg_ property
+    // directly. If the chosen theme also exists in other settings whose value
+    // would change, iconThemeScopeDialog asks where to apply it.
+    //
+    // Emitted after every decision so the combos re-read their cfg_ value.
+    // The combos don't bind currentIndex to cfg_, so without this a change made
+    // from another tab - or a Cancel - would leave the wrong entry displayed.
+    signal iconThemesSynced()
+
+    // Set while the dialog is open:
+    //   { sourceProp, sourceValue, themeName, rows: [ {prop,label,isSource,available,willChange,target} ] }
+    property var _pendingIconTheme: null
+
+    // Canonical theme ids: "font" | "symbolic" | "flat-color" | "3d-oxygen" |
+    // "meteocons" | "kde".
+    // `values` maps a canonical id to the value that setting stores for it. An id a
+    // setting does not list is NOT available there and that setting is never touched.
+    // "kde" is stored as "custom" by Panel and Tooltip (their "KDE Icon Theme" /
+    // "Custom" entry: KDE system icons + per-item overrides) and as "kde" by the two
+    // Widget settings.
+    // `legacy` maps old stored values to the value the combo actually displays.
+    // Choices that exist in only ONE setting (Weather icon theme's "KDE Symbolic" and
+    // "Custom…") appear in no `values` map, so they never trigger the dialog.
+    function _iconThemeSettings() {
+        return [
+            {
+                id: "panel",
+                prop: "cfg_panelIconTheme",
+                label: root.isSystemTrayConfig ? i18n("System tray \u203A Icon theme") : i18n("Panel \u203A Icon theme"),
+                values: {
+                    "font": "wi-font",
+                    "symbolic": "symbolic",
+                    "flat-color": "flat-color",
+                    "3d-oxygen": "3d-oxygen",
+                    "meteocons": "meteocons",
+                    "kde": "custom"
+                },
+                legacy: {}
+            },
+            {
+                id: "condition",
+                prop: "cfg_conditionIconTheme",
+                label: i18n("Widget \u203A General \u203A Weather icon theme"),
+                values: {
+                    "symbolic": "symbolic",
+                    "flat-color": "flat-color",
+                    "3d-oxygen": "3d-oxygen",
+                    "meteocons": "meteocons",
+                    "kde": "kde"
+                },
+                legacy: {
+                    "wi-font": "symbolic"
+                }
+            },
+            {
+                id: "details",
+                prop: "cfg_widgetIconTheme",
+                label: i18n("Widget \u203A Details \u203A Icon theme"),
+                values: {
+                    "symbolic": "symbolic",
+                    "flat-color": "flat-color",
+                    "3d-oxygen": "3d-oxygen",
+                    "meteocons": "meteocons",
+                    "kde": "kde"
+                },
+                legacy: {
+                    "wi-font": "symbolic"
+                }
+            },
+            {
+                id: "tooltip",
+                prop: "cfg_tooltipIconTheme",
+                label: i18n("Tooltip \u203A Icon theme"),
+                values: {
+                    "font": "wi-font",
+                    "symbolic": "symbolic",
+                    "flat-color": "flat-color",
+                    "3d-oxygen": "3d-oxygen",
+                    "meteocons": "meteocons",
+                    "kde": "custom"
+                },
+                legacy: {}
+            }
+        ];
+    }
+
+    function _iconThemeName(canonical) {
+        switch (canonical) {
+        case "font":
+            return i18n("Font icons");
+        case "symbolic":
+            return i18n("Symbolic (Bundled)");
+        case "flat-color":
+            return i18n("Flat Color (Bundled)");
+        case "3d-oxygen":
+            return i18n("3D Oxygen (Bundled)");
+        case "meteocons":
+            return i18n("Meteocons (Bundled)");
+        case "kde":
+            return i18n("KDE Icon Theme");
+        }
+        return canonical;
+    }
+
+    // Stored value -> canonical id, or "" for a setting-specific value.
+    function _canonicalIconTheme(setting, storedValue) {
+        var v = storedValue;
+        if (setting.legacy[v] !== undefined)
+            v = setting.legacy[v];
+        for (var k in setting.values) {
+            if (setting.values[k] === v)
+                return k;
+        }
+        return "";
+    }
+
+    // Entry point for all four combos.
+    function requestIconTheme(sourceId, value) {
+        var settings = _iconThemeSettings();
+        var source = null;
+        for (var i = 0; i < settings.length; ++i) {
+            if (settings[i].id === sourceId)
+                source = settings[i];
+        }
+        if (!source)
+            return;
+
+        var canonical = _canonicalIconTheme(source, value);
+        var rows = [];
+        var changes = 0;
+        if (canonical !== "") {
+            for (var j = 0; j < settings.length; ++j) {
+                var s = settings[j];
+                var isSource = (s.id === source.id);
+                var target = s.values[canonical];
+                var available = (target !== undefined);
+                var willChange = !isSource && available && _canonicalIconTheme(s, root[s.prop]) !== canonical;
+                if (willChange)
+                    changes++;
+                rows.push({
+                    prop: s.prop,
+                    label: s.label,
+                    isSource: isSource,
+                    available: available,
+                    willChange: willChange,
+                    target: target
+                });
+            }
+        }
+
+        // Nothing to offer - a setting-specific choice, or every other setting
+        // that has this theme already uses it. Behave exactly as before.
+        if (changes === 0) {
+            root[source.prop] = value;
+            root.iconThemesSynced();
+            return;
+        }
+
+        _pendingIconTheme = {
+            sourceProp: source.prop,
+            sourceValue: value,
+            themeName: _iconThemeName(canonical),
+            rows: rows
+        };
+        // Deferred: the combo's own popup is still closing inside onActivated.
+        Qt.callLater(function () {
+            iconThemeScopeDialog.open();
+        });
+    }
+
+    // "Apply everywhere": same mechanism as the Automatic-location dialog in
+    // configLocation.qml - write Plasmoid.configuration FIRST, then set cfg_ to
+    // the same value, so the KCM sees them equal (not dirty) and the change is
+    // live without a manual Apply click. Settings where the theme is missing, or
+    // that already use it, are not touched.
+    function applyIconThemeEverywhere() {
+        var p = _pendingIconTheme;
+        if (!p)
+            return;
+        _pendingIconTheme = null;
+        for (var i = 0; i < p.rows.length; ++i) {
+            var r = p.rows[i];
+            if (!r.isSource && !r.willChange)
+                continue;
+            var value = r.isSource ? p.sourceValue : r.target;
+            var key = r.prop.substring(4);   // "cfg_panelIconTheme" -> "panelIconTheme"
+            try {
+                Plasmoid.configuration[key] = value;
+            } catch (e) {}
+            root[r.prop] = value;
+        }
+        iconThemesSynced();
+    }
+
+    // "Apply only here": the pre-existing behaviour - stage cfg_ and let the
+    // KCM Apply button commit it.
+    function applyIconThemeHere() {
+        var p = _pendingIconTheme;
+        if (!p)
+            return;
+        _pendingIconTheme = null;
+        root[p.sourceProp] = p.sourceValue;
+        iconThemesSynced();
+    }
+
+    // "Cancel": leave every cfg_ untouched; the signal snaps the combo back.
+    function cancelIconThemeChange() {
+        _pendingIconTheme = null;
+        iconThemesSynced();
+    }
+
+    Kirigami.Dialog {
+        id: iconThemeScopeDialog
+        title: i18n("Apply icon theme")
+        standardButtons: Kirigami.Dialog.NoButton
+        leftPadding: Kirigami.Units.gridUnit * 2
+        rightPadding: Kirigami.Units.gridUnit * 2
+        topPadding: Kirigami.Units.gridUnit
+        bottomPadding: Kirigami.Units.gridUnit
+        // Esc / the title-bar close button count as Cancel. The three buttons
+        // clear _pendingIconTheme before closing, so this only fires for those.
+        onClosed: {
+            if (root._pendingIconTheme)
+                root.cancelIconThemeChange();
+        }
+
+        contentItem: Item {
+            implicitWidth: 540
+            implicitHeight: scopeCol.implicitHeight
+            ColumnLayout {
+                id: scopeCol
+                anchors.left: parent.left
+                anchors.right: parent.right
+                spacing: Kirigami.Units.largeSpacing
+
+                Kirigami.Icon {
+                    Layout.alignment: Qt.AlignHCenter
+                    source: "preferences-desktop-theme"
+                    Layout.preferredWidth: Kirigami.Units.iconSizes.huge
+                    Layout.preferredHeight: Kirigami.Units.iconSizes.huge
+                }
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                    textFormat: Text.RichText
+                    text: root._pendingIconTheme ? i18n("You selected <b>%1</b>. Apply it to every icon theme setting where it is available?", root._pendingIconTheme.themeName) : ""
+                }
+
+                // Where this theme is available across the four settings.
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+                    Repeater {
+                        model: root._pendingIconTheme ? root._pendingIconTheme.rows : []
+                        delegate: RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Kirigami.Units.smallSpacing
+                            opacity: modelData.available ? 1.0 : 0.6
+                            Kirigami.Icon {
+                                source: modelData.available ? "dialog-ok-apply" : "dialog-cancel"
+                                Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                                Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                text: modelData.label
+                                elide: Text.ElideRight
+                            }
+                            Label {
+                                text: modelData.isSource ? i18n("selected here") : (!modelData.available ? i18n("not available - left unchanged") : (modelData.willChange ? i18n("will be changed") : i18n("already set")))
+                                opacity: 0.7
+                                font: Kirigami.Theme.smallFont
+                            }
+                        }
+                    }
+                }
+                Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    horizontalAlignment: Text.AlignHCenter
+                    opacity: 0.75
+                    visible: {
+                        var p = root._pendingIconTheme;
+                        if (!p)
+                            return false;
+                        for (var i = 0; i < p.rows.length; ++i)
+                            if (!p.rows[i].available)
+                                return true;
+                        return false;
+                    }
+                    text: i18n("Settings where this theme is not available keep their current theme.")
+                }
+
+                Item {
+                    Layout.preferredHeight: Kirigami.Units.smallSpacing
+                }
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: Kirigami.Units.mediumSpacing
+                    Button {
+                        text: i18n("Apply everywhere")
+                        icon.name: "dialog-ok-apply"
+                        onClicked: {
+                            root.applyIconThemeEverywhere();
+                            iconThemeScopeDialog.close();
+                        }
+                    }
+                    Button {
+                        text: i18n("Apply only here")
+                        icon.name: "dialog-ok"
+                        onClicked: {
+                            root.applyIconThemeHere();
+                            iconThemeScopeDialog.close();
+                        }
+                    }
+                    Button {
+                        text: i18n("Cancel")
+                        icon.name: "dialog-cancel"
+                        onClicked: {
+                            root.cancelIconThemeChange();
+                            iconThemeScopeDialog.close();
+                        }
+                    }
+                }
+                Item {
+                    Layout.preferredHeight: Kirigami.Units.smallSpacing
+                }
+            }
+        }
+    }
+
     // ── Shared icon-config dialog for the Custom icon theme ─────────────────
     // Opens when the user clicks the configure button on a panel item.
     // For suntimes: shows separate sunrise + sunset icon pickers plus mode combo.

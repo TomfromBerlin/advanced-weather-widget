@@ -37,6 +37,15 @@ Kirigami.FormLayout {
     /** Emitted when the user clicks Configure… to push the panel sub-page */
     signal pushSubPage
 
+    // Refresh the icon theme combo after the icon theme scope dialog
+    // (configAppearance.qml) applied a theme from another tab or was cancelled.
+    Connections {
+        target: panelTab.configRoot
+        function onIconThemesSynced() {
+            iconThemeCombo.syncFromConfig();
+        }
+    }
+
     readonly property bool isSystemTrayConfig: configRoot.isSystemTrayConfig === true
     readonly property string _panelInfoMode: isSystemTrayConfig ? "simple" : configRoot.cfg_panelInfoMode
     readonly property int _simpleLayoutType: isSystemTrayConfig ? 2 : configRoot.cfg_panelSimpleLayoutType
@@ -1159,14 +1168,21 @@ Kirigami.FormLayout {
                     value: "custom"
                 }
             ]
-            Component.onCompleted: {
+            // Re-read cfg_panelIconTheme. Also called via iconThemesSynced when
+            // another tab applied a theme here, or the scope dialog was cancelled.
+            function syncFromConfig() {
+                var idx = 0;
                 for (var i = 0; i < model.length; ++i)
                     if (model[i].value === panelTab.configRoot.cfg_panelIconTheme) {
-                        currentIndex = i;
+                        idx = i;
                         break;
                     }
+                currentIndex = idx;
             }
-            onActivated: panelTab.configRoot.cfg_panelIconTheme = model[currentIndex].value
+            Component.onCompleted: syncFromConfig()
+            // Asks "Apply everywhere / only here / Cancel" when the theme also
+            // exists in other icon theme settings (see configAppearance.qml).
+            onActivated: panelTab.configRoot.requestIconTheme("panel", model[currentIndex].value)
         }
         Label {
             text: i18n("Size:")
