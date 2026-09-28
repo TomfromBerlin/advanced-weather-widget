@@ -39,6 +39,28 @@ Kirigami.FormLayout {
         Kirigami.FormData.label: i18n("Weather Provider")
     }
 
+    // The single place that flips Adaptive on/off. Both the Switch and its
+    // clickable label go through here. The label used to call
+    // adaptiveSwitch.toggle(), which changes `checked` WITHOUT emitting
+    // toggled() - so clicking the label moved the switch but never updated
+    // cfg_weatherProvider, leaving the switch showing "off" while Adaptive was
+    // still actually on (and the provider combo stuck read-only).
+    function setAdaptive(on) {
+        if (on) {
+            providerTab.configRoot.cfg_weatherProvider = "adaptive";
+        } else {
+            // Restore whatever provider was manually selected before Adaptive
+            // was turned on, instead of always resetting to Open-Meteo.
+            var restore = providerTab.configRoot.cfg_lastManualProvider;
+            if (!restore || restore === "adaptive")
+                restore = "openMeteo";
+            providerTab.configRoot.cfg_weatherProvider = restore;
+            // No need to touch providerCombo.currentIndex here: its binding
+            // follows cfg_weatherProvider by itself, and assigning it from JS
+            // would permanently break that binding.
+        }
+    }
+
     // Adaptive toggle row
     RowLayout {
         Kirigami.FormData.label: ""
@@ -46,18 +68,7 @@ Kirigami.FormLayout {
         Switch {
             id: adaptiveSwitch
             checked: providerTab.configRoot.isAdaptive
-            onToggled: {
-                if (checked) {
-                    providerTab.configRoot.cfg_weatherProvider = "adaptive";
-                } else {
-                    // Restore whatever provider was manually selected before
-                    // Adaptive was turned on, instead of always resetting to
-                    // Open-Meteo.
-                    var restore = providerTab.configRoot.cfg_lastManualProvider || "openMeteo";
-                    providerTab.configRoot.cfg_weatherProvider = restore;
-                    providerCombo.currentIndex = providerTab.configRoot.providerIndexFor(restore);
-                }
-            }
+            onToggled: providerTab.setAdaptive(checked)
         }
         Label {
             text: i18n("Adaptive (auto-fallback)")
@@ -65,7 +76,9 @@ Kirigami.FormLayout {
             verticalAlignment: Text.AlignVCenter
             MouseArea {
                 anchors.fill: parent
-                onClicked: adaptiveSwitch.toggle()
+                // Drive the config value directly (not the switch) - the
+                // switch's own binding then follows isAdaptive.
+                onClicked: providerTab.setAdaptive(!providerTab.configRoot.isAdaptive)
             }
         }
     }
