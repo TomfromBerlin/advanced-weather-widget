@@ -1687,7 +1687,11 @@ KCM.SimpleKCM {
                                     locs = [];
                                 }
                                 if (index >= 0 && index < locs.length) {
+                                    const wasActive = _isActive;
                                     locs[index].name = newName;
+
+                                    if (wasActive)
+                                        root.cfg_locationName = newName;
                                     root.cfg_savedLocations = JSON.stringify(locs);
                                 }
                                 _renaming = false;
