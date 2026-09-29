@@ -94,23 +94,42 @@
  * FIELD NAMES VERIFIED AGAINST: AEMET's own schema-description ("sh/...")
  * documents - fetched directly (they need no API key, unlike the actual data
  * endpoints): https://opendata.aemet.es/opendata/sh/dfd88b22 (daily) and
- * https://opendata.aemet.es/opendata/sh/93a7c63d (hourly) - which is how an
- * earlier inference-based mistake here got caught: wind was originally
- * modelled as one combined "vientoAndRachaMax" entry (a name that turned out
- * to be a downstream R package's tidied *column* name, not an AEMET JSON
- * key). AEMET actually keeps them separate on both endpoints - "viento"
- * ({periodo, direccion, velocidad}, hour-keyed on the hourly endpoint,
- * 6-hour-block-keyed on daily) and "rachaMax" ({periodo, value}, always
- * 6-hour-block-keyed, gust only, not currently surfaced by this module).
- * Also caught by the same documents: "uvMax" is a single-entry array
- * ([{value}]), not a bare scalar, and the hourly endpoint's
- * "probPrecipitacion" is keyed by 6-hour blocks in "HHHH" form (e.g. "0107"
- * = 01:00-07:00), not by hour - see _rangeContainsHour(). Secondary,
- * non-authoritative cross-checks: the Go client github.com/rubiojr/aemet-go,
- * the Python client github.com/pablo-moreno/python-aemet, and
- * PranshulGG/WeatherMaster#1030 (a Kotlin implementation tested against real
- * endpoints with a real key, and also where the ISO-8859-15 charset above
- * comes from).
+ * https://opendata.aemet.es/opendata/sh/93a7c63d (hourly). These documents
+ * describe wind as two separate fields on both endpoints - "viento"
+ * ({periodo, direccion, velocidad}) and "rachaMax" ({periodo, value}, gust
+ * only) - which is what this comment used to say, having corrected an
+ * earlier inference-based guess of one combined "vientoAndRachaMax" field
+ * (a name that turned out to be a downstream R package's tidied *column*
+ * name, not an AEMET JSON key, on this document's evidence).
+ *
+ * A real captured hourly response (2026-09-28, Madrid, saved as this
+ * conversation's reference) proved that "correction" wrong for the HOURLY
+ * endpoint specifically: it actually returns wind under one combined
+ * "vientoAndRachaMax" array after all - interleaving a {direccion,
+ * velocidad} entry and a separate gust-only {value} entry under the same
+ * "periodo" - with direccion/velocidad each wrapped in a single-element
+ * array (["NE"], ["5"]), not the plain scalar strings the schema doc
+ * implies. See _windEntries() for exactly how this is unpacked. The
+ * schema document is AEMET's own, but is evidently not a live contract - it
+ * describes the field shape now confirmed wrong for hourly, and is left
+ * unverified (still assumed correct) for daily, which has not had a real
+ * capture checked against it. If daily wind ever looks off, that document
+ * is exactly as suspect there as it was here, and the fix is the same:
+ * get one real "diaria" response and check it directly rather than trust
+ * the schema doc.
+ *
+ * Also caught by the schema documents originally: "uvMax" is a
+ * single-entry array ([{value}]), not a bare scalar, and the hourly
+ * endpoint's "probPrecipitacion" is keyed by 6-hour blocks in "HHHH" form
+ * (e.g. "0107" = 01:00-07:00), not by hour - see _rangeContainsHour(). The
+ * same real capture above also confirmed hourly "precipitacion" can hold
+ * the non-numeric sentinel "Ip" ("Inapreciable"/trace) in place of a
+ * number - see _precipMmValue(). Secondary, non-authoritative cross-checks
+ * used earlier: the Go client github.com/rubiojr/aemet-go, the Python
+ * client github.com/pablo-moreno/python-aemet, and
+ * PranshulGG/WeatherMaster#1030 (a Kotlin implementation tested against
+ * real endpoints with a real key, and also where the ISO-8859-15 charset
+ * above comes from).
  */
 
 // ── Geometry helpers ─────────────────────────────────────────────────────
@@ -292,8 +311,36 @@ function _alignDaysToToday(dias, service) {
 // depending on the field - route every field access through this so a null
 // doesn't silently become 0 on a QML "real" property (see the identical
 // concern/fix documented in openMeteo.js's _num()).
+/**
+ * Converts an AEMET field value to a real JS number, treating null/
+ * undefined/"no data" consistently as NaN - never silently 0, so a missing
+ * reading doesn't get plotted or averaged as if it were a genuine zero (see
+ * openMeteo.js's identical concern/fix).
+ *
+ * AEMET's JSON encodes every numeric field as a STRING ("26", "0.1", "-3"),
+ * never a JSON number. This used to return that string completely
+ * unconverted, which happened to look fine wherever the value only ever
+ * reached an implicitly-coercing context (Math.round(), multiplication/
+ * division, QML's own property-assignment coercion into a typed `real`
+ * role) - but breaks in at least two ways that don't coerce: a direct
+ * method call like precipValue()'s mmh.toFixed(1) throws outright on a
+ * string (strings have no .toFixed), and a bare `>`/`<` comparison between
+ * two numeric strings compares them LEXICOGRAPHICALLY, not numerically -
+ * "9" > "10" is true as strings. That second one was a real, silent bug in
+ * _maxValue()'s same-day UV max: any day whose UV crossed from single into
+ * double digits (a normal summer reading) could have picked the wrong,
+ * lower value as "the max". parseFloat() converts properly, and also
+ * disposes of the one AEMET-specific non-numeric sentinel seen in the wild
+ * - precipitacion's "Ip" ("Inapreciable" / trace amount) - by falling
+ * through to the NaN branch below rather than returning "Ip" unconverted;
+ * see _precipMmValue() for where a trace reading is instead given a real,
+ * small nonzero value rather than being discarded as NaN.
+ */
 function _num(v) {
-    return (v === null || v === undefined || (typeof v === "number" && isNaN(v))) ? NaN : v;
+    if (v === null || v === undefined) return NaN;
+    if (typeof v === "number") return v; // already a number (possibly already NaN) - nothing to convert
+    var n = parseFloat(v);
+    return isNaN(n) ? NaN : n;
 }
 
 // Same "no data" concern as _num() above, but for estadoCielo's string sky
@@ -309,6 +356,60 @@ function _num(v) {
 // the backstop in case a still-unanticipated shape does the same thing.
 function _skyValue(entry) {
     return (entry && entry.value != null) ? entry.value : "";
+}
+
+/**
+ * Returns a normalized {periodo, direccion, velocidad} array from AEMET's
+ * hourly "vientoAndRachaMax" field, so it can be handed straight to the
+ * existing _findByPeriod()/_nearestHourEntry() helpers exactly like any
+ * other hour-keyed field (rather than duplicating their period-matching or
+ * nearest-hour-fallback logic here).
+ *
+ * Confirmed against a real captured response (2026-09-28, Madrid): unlike
+ * the daily product's separate "viento" field this file's header comment
+ * describes, the hourly product keeps wind under a single
+ * "vientoAndRachaMax" array that interleaves TWO different entry shapes
+ * under the SAME "periodo" key - one carrying {direccion, velocidad} (that
+ * hour's average wind) immediately followed by one carrying only {value}
+ * (that hour's gust/racha, km/h - not surfaced here, since ForecastView's
+ * hourly cards have no gust slot; see the daily product's own separate
+ * rachaMax for where gust IS used). This keeps only the entries that
+ * actually have a "direccion"/"velocidad" key, dropping the gust-only ones,
+ * and unwraps direccion/velocidad from the single-element arrays this
+ * product holds them in (["NE"], ["5"]) - unlike the daily product's plain
+ * scalar strings - so every caller can keep treating a match like the daily
+ * product's plain {direccion, velocidad} shape.
+ */
+function _windEntries(arr) {
+    if (!arr) return [];
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+        var e = arr[i];
+        if (e.direccion === undefined && e.velocidad === undefined) continue; // the gust-only entry sharing this hour's periodo
+        out.push({
+            periodo: (e.periodo !== undefined) ? e.periodo : e.hora,
+            direccion: Array.isArray(e.direccion) ? e.direccion[0] : e.direccion,
+            velocidad: Array.isArray(e.velocidad) ? e.velocidad[0] : e.velocidad
+        });
+    }
+    return out;
+}
+
+/**
+ * AEMET's hourly precipitacion can hold "Ip" - "Inapreciable": precipitation
+ * occurred but was too light to give a numeric mm reading. _num() alone
+ * turns "Ip" into NaN (it isn't a parseable number), and every consumer's
+ * isNaN() guard then treats that exactly like "no data" - silently
+ * discarding the fact that AEMET is reporting real, if trace, precipitation
+ * (a genuinely different situation from a dry hour with no data at all).
+ * Mapped instead to a small nonzero placeholder, matching how "trace"
+ * readings are conventionally represented in weather data, so it displays
+ * as e.g. "0.1 mm" rather than disappearing into "--".
+ */
+function _precipMmValue(entry) {
+    if (!entry) return NaN;
+    if (entry.value === "Ip") return 0.1;
+    return _num(entry.value);
 }
 
 function _aemetDirToDegrees(dir, W) {
@@ -856,7 +957,7 @@ function _currentFromHourlyDay(today, W, service) {
     var temp = _nearestHourEntry(today.temperatura, hourStr);
     var sens = _nearestHourEntry(today.sensTermica, hourStr);
     var hum  = _nearestHourEntry(today.humedadRelativa, hourStr);
-    var wind = _nearestHourEntry(today.viento, hourStr);
+    var wind = _nearestHourEntry(_windEntries(today.vientoAndRachaMax), hourStr);
     var precip = _nearestHourEntry(today.precipitacion, hourStr);
 
     if (!temp && !sky) return null;
@@ -872,7 +973,7 @@ function _currentFromHourlyDay(today, W, service) {
         windDirection: wind ? _aemetDirToDegrees(wind.direccion, W) : NaN,
         dewPointC: W.dewPoint(t, h),
         visibilityKm: W.NOT_SUPPORTED, // not in any AEMET municipio forecast product
-        precipMmh: precip ? _num(precip.value) : 0,
+        precipMmh: precip ? _precipMmValue(precip) : 0,
         uvIndex: NaN, // not exposed hourly - left as NaN (not NOT_SUPPORTED) so fetchCurrent's
                        // combine() step backfills it from today's daily uvMax; NOT_SUPPORTED
                        // would defeat that isNaN() check, since -9999 isn't NaN
@@ -894,7 +995,7 @@ function _buildHourlyArray(day, W, service) {
     // probPrecipitacion uses 6-hour "HHHH" blocks instead (see
     // _rangeContainsHour) and is looked up per-hour separately below, not
     // unioned in here (its block keys aren't valid hours).
-    ["estadoCielo", "temperatura", "viento", "humedadRelativa",
+    ["estadoCielo", "temperatura", "vientoAndRachaMax", "humedadRelativa",
      "precipitacion"].forEach(function (field) {
         var a = day[field];
         if (!a) return;
@@ -903,10 +1004,11 @@ function _buildHourlyArray(day, W, service) {
             if (p !== undefined) hours[p] = true;
         });
     });
+    var windAll = _windEntries(day.vientoAndRachaMax);
     Object.keys(hours).sort().forEach(function (h) {
         var sky   = _findByPeriod(day.estadoCielo, h);
         var temp  = _findByPeriod(day.temperatura, h);
-        var wind  = _findByPeriod(day.viento, h);
+        var wind  = _findByPeriod(windAll, h);
         var hum   = _findByPeriod(day.humedadRelativa, h);
         var pMm   = _findByPeriod(day.precipitacion, h);
         var pProb = _precipProbForHour(day.probPrecipitacion, h, utcOffsetHours);
@@ -918,7 +1020,7 @@ function _buildHourlyArray(day, W, service) {
             windDeg: wind ? _aemetDirToDegrees(wind.direccion, W) : NaN,
             humidity: hum ? _num(hum.value) : NaN,
             precipProb: pProb ? _num(pProb.value) : NaN,
-            precipMm: pMm ? _num(pMm.value) : NaN
+            precipMm: _precipMmValue(pMm)
         });
     });
     return arr;
