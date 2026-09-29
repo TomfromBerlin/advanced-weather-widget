@@ -271,13 +271,18 @@ KCM.AbstractKCM {
         iconThemesSynced();
     }
 
-    // "Apply only here": the pre-existing behaviour - stage cfg_ and let the
-    // KCM Apply button commit it.
+    // "Apply only here": same live-apply mechanism as applyIconThemeEverywhere
+    // above, but scoped to just the source setting - the other three settings
+    // are left completely untouched (not even re-checked against the theme).
     function applyIconThemeHere() {
         var p = _pendingIconTheme;
         if (!p)
             return;
         _pendingIconTheme = null;
+        var key = p.sourceProp.substring(4);   // "cfg_panelIconTheme" -> "panelIconTheme"
+        try {
+            Plasmoid.configuration[key] = p.sourceValue;
+        } catch (e) {}
         root[p.sourceProp] = p.sourceValue;
         iconThemesSynced();
     }
