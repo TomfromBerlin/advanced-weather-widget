@@ -54,8 +54,7 @@ KCM.AbstractKCM {
 
     function _detectSystemTrayConfig() {
         try {
-            if (Plasmoid.containment.containmentType == 129
-                && Plasmoid.formFactor == 2) {
+            if (Plasmoid.containment.containmentType == 129 && Plasmoid.formFactor == 2) {
                 return true;
             }
         } catch (e) {}
@@ -71,11 +70,14 @@ KCM.AbstractKCM {
     // ══════════════════════════════════════════════════════════════════════
     // ICON THEME SYNC - "Apply everywhere" / "Apply only here" / "Cancel"
     // ══════════════════════════════════════════════════════════════════════
-    // Four settings pick an icon theme, each with its own stored values:
-    //   Panel / System tray   cfg_panelIconTheme      (ConfigPanelTab)
-    //   Widget > General      cfg_conditionIconTheme  "Weather icon theme"
-    //   Widget > Details      cfg_widgetIconTheme     (both: ConfigWidgetTab)
-    //   Tooltip               cfg_tooltipIconTheme    (ConfigTooltipTab)
+    // Six settings pick an icon theme, each with its own stored values:
+    //   Panel / System tray            cfg_panelIconTheme            (ConfigPanelTab)
+    //   Panel Simple layout            cfg_panelSimpleIconStyle /
+    //                                   cfg_traySimpleIconStyle       (ConfigPanelTab)
+    //   Panel Multi-line main icon     cfg_panelMultilineIconStyle   (ConfigPanelTab)
+    //   Widget > General               cfg_conditionIconTheme  "Weather icon theme"
+    //   Widget > Details               cfg_widgetIconTheme     (both: ConfigWidgetTab)
+    //   Tooltip                        cfg_tooltipIconTheme    (ConfigTooltipTab)
     //
     // Each combo calls requestIconTheme() instead of writing its cfg_ property
     // directly. If the chosen theme also exists in other settings whose value
@@ -84,7 +86,7 @@ KCM.AbstractKCM {
     // Emitted after every decision so the combos re-read their cfg_ value.
     // The combos don't bind currentIndex to cfg_, so without this a change made
     // from another tab - or a Cancel - would leave the wrong entry displayed.
-    signal iconThemesSynced()
+    signal iconThemesSynced
 
     // Set while the dialog is open:
     //   { sourceProp, sourceValue, themeName, rows: [ {prop,label,isSource,available,willChange,target} ] }
@@ -94,12 +96,21 @@ KCM.AbstractKCM {
     // "meteocons" | "kde".
     // `values` maps a canonical id to the value that setting stores for it. An id a
     // setting does not list is NOT available there and that setting is never touched.
-    // "kde" is stored as "custom" by Panel and Tooltip (their "KDE Icon Theme" /
-    // "Custom" entry: KDE system icons + per-item overrides) and as "kde" by the two
-    // Widget settings.
-    // `legacy` maps old stored values to the value the combo actually displays.
-    // Choices that exist in only ONE setting (Weather icon theme's "KDE Symbolic" and
-    // "Custom…") appear in no `values` map, so they never trigger the dialog.
+    // "kde" is stored as "custom" by Panel/Panel-Simple/Panel-Multiline and Tooltip
+    // (their "KDE Icon Theme" / "Custom" entry: KDE system icons + per-item
+    // overrides), as "kde" by Widget > Details, and as "kde" or (via `legacy`)
+    // "kde-symbolic" by Widget > General.
+    // `legacy` maps other stored values that mean the same canonical theme onto the
+    // one `values` uses, so a setting can offer color-mode variants (Panel
+    // Simple/Multiline's "Colorful"/"Symbolic", Weather icon theme's "KDE Symbolic")
+    // that still round-trip as canonical "kde" for sync purposes. A sync FROM
+    // elsewhere only writes the representative value into a setting that was on a
+    // genuinely different theme; a setting already on any kde-family flavour is left
+    // exactly as the user had it (a sync never "upgrades" Colorful to Custom, or
+    // Symbolic to Colorful, on its own).
+    // Choices that exist in only ONE setting ("Custom…" on Weather icon theme, which
+    // keeps its own separate per-condition storage instead of Panel's) appear in no
+    // `values`/`legacy` entry, so they never trigger the dialog.
     function _iconThemeSettings() {
         return [
             {
@@ -117,6 +128,54 @@ KCM.AbstractKCM {
                 legacy: {}
             },
             {
+                id: "panel-simple",
+                prop: root.isSystemTrayConfig ? "cfg_traySimpleIconStyle" : "cfg_panelSimpleIconStyle",
+                label: root.isSystemTrayConfig ? i18n("System tray \u203A Simple layout \u203A Weather icon style") : i18n("Panel \u203A Simple layout \u203A Weather icon style"),
+                values: {
+                    "symbolic": "symbolic-bundled",
+                    "flat-color": "flat-color",
+                    "3d-oxygen": "3d-oxygen",
+                    "meteocons": "meteocons",
+                    "kde": "custom"
+                },
+                // "Colorful" and plain "Symbolic" are two automatic renderings of the
+                // same KDE-system-icon source as "Custom…" (no per-condition override,
+                // just a color treatment) - all three read as canonical "kde", matching
+                // how this combo's own entries are now labelled ("KDE Icon theme
+                // (Colorful)" / "(Symbolic)"). A sync FROM elsewhere only writes here
+                // when this setting was on a genuinely different theme; if it's already
+                // any kde flavour ("colorful"/"symbolic"/"custom"), requestIconTheme's
+                // willChange check leaves it exactly as the user had it - a sync never
+                // "upgrades" Colorful to Custom or vice versa on its own.
+                legacy: {
+                    "colorful": "custom",
+                    "symbolic": "custom"
+                },
+                // KDE colour flavours this setting offers: flavour id -> stored value.
+                flavors: {
+                    "colorful": "colorful",
+                    "symbolic": "symbolic"
+                }
+            },
+            {
+                id: "panel-multiline",
+                prop: "cfg_panelMultilineIconStyle",
+                label: i18n("Panel \u203A Multi-line layout \u203A Main icon style"),
+                values: {
+                    "kde": "custom"
+                },
+                // Same reasoning as panel-simple above: "Colorful"/"Symbolic" are
+                // automatic KDE-icon renderings, not a separate icon source.
+                legacy: {
+                    "colorful": "custom",
+                    "symbolic": "custom"
+                },
+                flavors: {
+                    "colorful": "colorful",
+                    "symbolic": "symbolic"
+                }
+            },
+            {
                 id: "condition",
                 prop: "cfg_conditionIconTheme",
                 label: i18n("Widget \u203A General \u203A Weather icon theme"),
@@ -127,8 +186,22 @@ KCM.AbstractKCM {
                     "meteocons": "meteocons",
                     "kde": "kde"
                 },
+                // "KDE Icon Theme (Symbolic)" (stored as "kde-symbolic") is the same
+                // KDE-system-icon source as "KDE Icon Theme (Colorful)" ("kde"), just
+                // rendered monochrome - both read as canonical "kde". A sync FROM
+                // elsewhere only writes plain "kde" here when this setting was on a
+                // genuinely different theme; if it's already "kde" or "kde-symbolic",
+                // requestIconTheme's willChange check leaves the user's color-mode pick
+                // alone. "Custom…" keeps its own separate per-condition icon storage
+                // here (cfg_widgetConditionCustomIcons, not shared with Panel's
+                // cfg_panelCustomIcons) and stays unmapped/setting-specific.
                 legacy: {
-                    "wi-font": "symbolic"
+                    "wi-font": "symbolic",
+                    "kde-symbolic": "kde"
+                },
+                flavors: {
+                    "colorful": "kde",
+                    "symbolic": "kde-symbolic"
                 }
             },
             {
@@ -163,7 +236,24 @@ KCM.AbstractKCM {
         ];
     }
 
-    function _iconThemeName(canonical) {
+    // Colour flavour ("colorful" | "symbolic") a setting currently stores, or ""
+    // when the setting has no flavours or holds something else (e.g. "custom",
+    // whose per-item overrides must never be overwritten by a flavour sync).
+    function _kdeFlavor(setting, storedValue) {
+        if (!setting.flavors)
+            return "";
+        for (var f in setting.flavors) {
+            if (setting.flavors[f] === storedValue)
+                return f;
+        }
+        return "";
+    }
+
+    function _iconThemeName(canonical, flavor) {
+        if (canonical === "kde" && flavor === "colorful")
+            return i18n("KDE Icon Theme (Colorful)");
+        if (canonical === "kde" && flavor === "symbolic")
+            return i18n("KDE Icon Theme (Symbolic)");
         switch (canonical) {
         case "font":
             return i18n("Font icons");
@@ -205,6 +295,10 @@ KCM.AbstractKCM {
             return;
 
         var canonical = _canonicalIconTheme(source, value);
+        // "Colorful" vs "Symbolic" both read as canonical "kde", so on their own
+        // they never differ between settings and the dialog would be skipped
+        // whenever everything is already on a KDE flavour. Track the flavour too.
+        var flavor = (canonical === "kde") ? _kdeFlavor(source, value) : "";
         var rows = [];
         var changes = 0;
         if (canonical !== "") {
@@ -213,7 +307,17 @@ KCM.AbstractKCM {
                 var isSource = (s.id === source.id);
                 var target = s.values[canonical];
                 var available = (target !== undefined);
-                var willChange = !isSource && available && _canonicalIconTheme(s, root[s.prop]) !== canonical;
+                var current = root[s.prop];
+                var themeDiffers = available && _canonicalIconTheme(s, current) !== canonical;
+                // Same KDE theme, but a different colour flavour. Settings on
+                // "custom" (flavour "") are left alone.
+                var flavorDiffers = false;
+                if (flavor !== "" && s.flavors && s.flavors[flavor] !== undefined) {
+                    target = s.flavors[flavor];
+                    var curFlavor = _kdeFlavor(s, current);
+                    flavorDiffers = available && !themeDiffers && curFlavor !== "" && curFlavor !== flavor;
+                }
+                var willChange = !isSource && (themeDiffers || flavorDiffers);
                 if (willChange)
                     changes++;
                 rows.push({
@@ -238,7 +342,7 @@ KCM.AbstractKCM {
         _pendingIconTheme = {
             sourceProp: source.prop,
             sourceValue: value,
-            themeName: _iconThemeName(canonical),
+            themeName: _iconThemeName(canonical, flavor),
             rows: rows
         };
         // Deferred: the combo's own popup is still closing inside onActivated.
@@ -272,8 +376,8 @@ KCM.AbstractKCM {
     }
 
     // "Apply only here": same live-apply mechanism as applyIconThemeEverywhere
-    // above, but scoped to just the source setting - the other three settings
-    // are left completely untouched (not even re-checked against the theme).
+    // above, but scoped to just the source setting - every other setting is
+    // left completely untouched (not even re-checked against the theme).
     function applyIconThemeHere() {
         var p = _pendingIconTheme;
         if (!p)
@@ -319,7 +423,7 @@ KCM.AbstractKCM {
 
                 Kirigami.Icon {
                     Layout.alignment: Qt.AlignHCenter
-                    source: "preferences-desktop-theme"
+                    source: "preferences-desktop-icons"
                     Layout.preferredWidth: Kirigami.Units.iconSizes.huge
                     Layout.preferredHeight: Kirigami.Units.iconSizes.huge
                 }
@@ -331,7 +435,7 @@ KCM.AbstractKCM {
                     text: root._pendingIconTheme ? i18n("You selected <b>%1</b>. Apply it to every icon theme setting where it is available?", root._pendingIconTheme.themeName) : ""
                 }
 
-                // Where this theme is available across the four settings.
+                // Where this theme is available across the icon theme settings.
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: Kirigami.Units.smallSpacing
@@ -1423,7 +1527,7 @@ KCM.AbstractKCM {
     property double cfg_panelSimpleTempShadowIntensity: 0.8
     property string cfg_panelSimpleTempShadowColor: ""   // empty = theme background
     property string cfg_simpleTempColor: ""              // empty = theme text color
-    property bool   cfg_simpleTempColorDynamic: false    // true = follow the forecast curve scale
+    property bool cfg_simpleTempColorDynamic: false    // true = follow the forecast curve scale
     // Compressed badge options
     property string cfg_compressedBadgePosition: "bottom-right"
     property int cfg_compressedBadgeSpacing: 0
@@ -1441,24 +1545,24 @@ KCM.AbstractKCM {
     property int cfg_forecastDays: 5
     property string cfg_forecastIconTheme: "symbolic"
     property bool cfg_forecastShowSunEvents: true
-    property bool cfg_forecastShowToday:    true
+    property bool cfg_forecastShowToday: true
     property string cfg_forecastHourlyLayout: "cards"
-    property bool   cfg_forecastAutoOpen:     true
-    property bool   cfg_forecastExpandAll:    false
-    property bool   cfg_forecastShowPastHours: false
-    property bool   cfg_forecastShowWind:       true
-    property bool   cfg_forecastShowPressure:   false
-    property bool   cfg_forecastShowKpIndex:    false
-    property bool   cfg_forecastShowUvIndex:    false
-    property bool   cfg_forecastShowPrecipSum:  false
-    property bool   cfg_forecastShowVisibility: false
-    property bool   cfg_forecastHourlyShowPrecipProb: true
-    property bool   cfg_forecastHourlyShowWind:       true
-    property bool   cfg_forecastHourlyShowPressure:   false
-    property bool   cfg_forecastHourlyShowKpIndex:    false
-    property bool   cfg_forecastHourlyShowUvIndex:    false
-    property bool   cfg_forecastHourlyShowPrecipSum:  false
-    property bool   cfg_forecastHourlyShowVisibility: false
+    property bool cfg_forecastAutoOpen: true
+    property bool cfg_forecastExpandAll: false
+    property bool cfg_forecastShowPastHours: false
+    property bool cfg_forecastShowWind: true
+    property bool cfg_forecastShowPressure: false
+    property bool cfg_forecastShowKpIndex: false
+    property bool cfg_forecastShowUvIndex: false
+    property bool cfg_forecastShowPrecipSum: false
+    property bool cfg_forecastShowVisibility: false
+    property bool cfg_forecastHourlyShowPrecipProb: true
+    property bool cfg_forecastHourlyShowWind: true
+    property bool cfg_forecastHourlyShowPressure: false
+    property bool cfg_forecastHourlyShowKpIndex: false
+    property bool cfg_forecastHourlyShowUvIndex: false
+    property bool cfg_forecastHourlyShowPrecipSum: false
+    property bool cfg_forecastHourlyShowVisibility: false
     property bool cfg_roundValues: true
     property bool cfg_showScrollbox: true
     property bool cfg_showUpdateText: true
@@ -1478,9 +1582,9 @@ KCM.AbstractKCM {
     property string cfg_widgetLayoutMode: "advanced"  // "advanced" | "simple"
     property string cfg_widgetSimpleDetailsOrder: "humidity;pressure;preciprate;precipsum"
     property string cfg_widgetSimpleDetailsItemIcons: "humidity=1;pressure=1;preciprate=1;precipsum=1"
-    property bool   cfg_headerShowDateTime: false
-    property string cfg_headerDateFormat:   "locale-long"
-    property string cfg_headerTimeFormat:   "locale"
+    property bool cfg_headerShowDateTime: false
+    property string cfg_headerDateFormat: "locale-long"
+    property string cfg_headerTimeFormat: "locale"
     property bool cfg_simpleShowForecast: true
     property bool cfg_simpleShowSunriseSunset: true
     property bool cfg_simpleShowForecastCompass: true
@@ -1530,23 +1634,23 @@ KCM.AbstractKCM {
     property int cfg_tooltipHeightManual: 300
 
     // ── Calendar first day of week (-1 = region default) ─────────────────
-    property int    cfg_calendarFirstDayOfWeek: -1
+    property int cfg_calendarFirstDayOfWeek: -1
 
     // ── Item date/time formats ────────────────────────────────────────────
-    property string cfg_panelDateTimeFormat:   "locale-short"
-    property string cfg_panelTimeFormat:       "locale"
+    property string cfg_panelDateTimeFormat: "locale-short"
+    property string cfg_panelTimeFormat: "locale"
     property string cfg_detailsDateTimeFormat: "locale-long"
-    property string cfg_detailsTimeFormat:     "locale"
+    property string cfg_detailsTimeFormat: "locale"
     property string cfg_tooltipDateTimeFormat: "locale-long"
-    property string cfg_tooltipTimeFormat:     "locale"
+    property string cfg_tooltipTimeFormat: "locale"
 
     // ── Dual temperature display ──────────────────────────────────────────
-    property bool   cfg_dualTempEnabled:   false
+    property bool cfg_dualTempEnabled: false
     property string cfg_dualTempSeparator: " / "
-    property bool   cfg_dualTempInWidget:  true
-    property bool   cfg_dualTempInPanel:   true
-    property bool   cfg_dualTempInTooltip: true
-    property bool   cfg_dualTempSwapOrder: false
+    property bool cfg_dualTempInWidget: true
+    property bool cfg_dualTempInPanel: true
+    property bool cfg_dualTempInTooltip: true
+    property bool cfg_dualTempSwapOrder: false
 
     // ── Units config aliases (Issue #8) ──────────────────────────────────
     property string cfg_unitsMode: "metric"
@@ -1603,9 +1707,7 @@ KCM.AbstractKCM {
     // the matching live panel dim.
     // Mirrors CompactView simpleIconSz formula exactly.
     function _autoIconSz(lt, mode) {
-        var dim = mode === "large" && root.cfg_simplePanelLargeDim > 0
-            ? root.cfg_simplePanelLargeDim
-            : (root.cfg_simplePanelDim > 0 ? root.cfg_simplePanelDim : 48);
+        var dim = mode === "large" && root.cfg_simplePanelLargeDim > 0 ? root.cfg_simplePanelLargeDim : (root.cfg_simplePanelDim > 0 ? root.cfg_simplePanelDim : 48);
         if (root.cfg_simplePanelIsVertical)
             return lt === 0 ? Math.max(16, Math.round(dim / 2)) : Math.max(16, dim);
         else
@@ -1615,15 +1717,11 @@ KCM.AbstractKCM {
     // the matching live panel dim.
     // Mirrors CompactView simpleFontSz formula exactly.
     function _autoFontSz(lt, mode) {
-        var dim = mode === "large" && root.cfg_simplePanelLargeDim > 0
-            ? root.cfg_simplePanelLargeDim
-            : (root.cfg_simplePanelDim > 0 ? root.cfg_simplePanelDim : 48);
+        var dim = mode === "large" && root.cfg_simplePanelLargeDim > 0 ? root.cfg_simplePanelLargeDim : (root.cfg_simplePanelDim > 0 ? root.cfg_simplePanelDim : 48);
         if (root.cfg_simplePanelIsVertical)
             return Math.max(8, Math.round(dim / 3));
         else
-            return lt === 1 || lt === 2
-                ? Math.max(8, Math.round(dim / 3))
-                : Math.max(8, Math.round(dim * 11 / 24));
+            return lt === 1 || lt === 2 ? Math.max(8, Math.round(dim / 3)) : Math.max(8, Math.round(dim * 11 / 24));
     }
 
     // ── Custom icon map helpers ──────────────────────────────────────────
@@ -2182,7 +2280,7 @@ KCM.AbstractKCM {
     // ─────────────────────────────────────────────────────────────────────
     // Simple mode items helpers  (chip-only subset - no wind/moonphase/condition)
     // ─────────────────────────────────────────────────────────────────────
-    readonly property var allSimpleDefs: allDetailsDefs.filter(function(d) {
+    readonly property var allSimpleDefs: allDetailsDefs.filter(function (d) {
         return ["wind", "moonphase", "condition", "suntimes"].indexOf(d.itemId) < 0;
     })
     function parseSimpleItemIcons() {
@@ -2202,12 +2300,16 @@ KCM.AbstractKCM {
         }).join(";");
     }
     function initSimpleModel() {
-        var raw = (cfg_widgetSimpleDetailsOrder || "humidity;pressure;preciprate;precipsum").split(";").map(function(t) {
+        var raw = (cfg_widgetSimpleDetailsOrder || "humidity;pressure;preciprate;precipsum").split(";").map(function (t) {
             return t.trim();
-        }).filter(function(t) { return t.length > 0; });
+        }).filter(function (t) {
+            return t.length > 0;
+        });
         var iconMap = parseSimpleItemIcons();
-        _initItemModel(simpleWorkingModel, allSimpleDefs, raw.join(";"), function(def, tok) {
-            return { itemShowIcon: (tok in iconMap) ? iconMap[tok] : true };
+        _initItemModel(simpleWorkingModel, allSimpleDefs, raw.join(";"), function (def, tok) {
+            return {
+                itemShowIcon: (tok in iconMap) ? iconMap[tok] : true
+            };
         });
     }
     function applySimpleItems() {

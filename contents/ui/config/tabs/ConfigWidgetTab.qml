@@ -47,8 +47,8 @@ ColumnLayout {
 
     /** Condition icon theme choices - adds KDE Symbolic and Custom options */
     readonly property var conditionIconThemeModel: [
-        { text: i18n("KDE Icon Theme"),        value: "kde"          },
-        { text: i18n("KDE Symbolic"),          value: "kde-symbolic" },
+        { text: i18n("KDE Icon Theme (Colorful)"),        value: "kde"          },
+        { text: i18n("KDE Icon Theme (Symbolic)"),          value: "kde-symbolic" },
         { text: i18n("Symbolic (Bundled)"),        value: "symbolic"     },
         { text: i18n("Flat Color (Bundled)"),      value: "flat-color"   },
         { text: i18n("3D Oxygen (Bundled)"),       value: "3d-oxygen"    },
