@@ -34,6 +34,15 @@ Kirigami.FormLayout {
     /** Emitted when the user clicks Configure… to push the tooltip sub-page */
     signal pushSubPage()
 
+    // Refresh the icon theme combo after the icon theme scope dialog
+    // (configAppearance.qml) applied a theme from another tab or was cancelled.
+    Connections {
+        target: tooltipTab.configRoot
+        function onIconThemesSynced() {
+            ttIconThemeCombo.syncFromConfig();
+        }
+    }
+
     // ── Enable / Disable tooltip ──────────────────────────
     RowLayout {
         Kirigami.FormData.label: i18n("Tooltip:")
@@ -221,14 +230,21 @@ Kirigami.FormLayout {
                     value: "custom"
                 }
             ]
-            Component.onCompleted: {
+            // Re-read cfg_tooltipIconTheme. Also called via iconThemesSynced when
+            // another tab applied a theme here, or the scope dialog was cancelled.
+            function syncFromConfig() {
+                var idx = 0;
                 for (var i = 0; i < model.length; ++i)
                     if (model[i].value === tooltipTab.configRoot.cfg_tooltipIconTheme) {
-                        currentIndex = i;
+                        idx = i;
                         break;
                     }
+                currentIndex = idx;
             }
-            onActivated: tooltipTab.configRoot.cfg_tooltipIconTheme = model[currentIndex].value
+            Component.onCompleted: syncFromConfig()
+            // Asks "Apply everywhere / only here / Cancel" when the theme also
+            // exists in other icon theme settings (see configAppearance.qml).
+            onActivated: tooltipTab.configRoot.requestIconTheme("tooltip", model[currentIndex].value)
         }
         Label {
             text: i18n("Size:")

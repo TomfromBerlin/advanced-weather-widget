@@ -58,6 +58,11 @@
     <entry name="wbApiKey"           type="String"><default></default></entry>
     <entry name="qwApiKey"           type="String"><default></default></entry>
     <entry name="qwApiHost"          type="String"><default></default></entry>
+    <!-- AEMET OpenData (Spain only) - free key from
+         https://opendata.aemet.es/centrodedescargas/altaUsuario -->
+    <entry name="aemetApiKey"  type="String"><default></default></entry>
+    <entry name="aemetMuniId" type="String"> <default></default></entry>
+    <entry name="aemetMuniKey" type="String"><default></default></entry>
 
     <!-- ── Behaviour ─────────────────────────────────────────────────── -->
     <entry name="keepOpen"           type="Bool"><default>false</default></entry>
@@ -84,8 +89,8 @@
     <entry name="panelInfoMode"    type="String"><default>simple</default></entry>
     <entry name="panelItemOrder"   type="String"><default>location;temperature;humidity</default></entry>
     <entry name="panelItemIcons"   type="String"><default>location=1;condition=1;temperature=1;suntimes=1;wind=1;feelslike=1;humidity=1;pressure=1;moonphase=1;preciprate=1;uvindex=1;airquality=1;spaceweather=1;alerts=1;snowcover=1</default></entry>
-    <entry name="panelSeparator"   type="String"><default> • </default></entry>
-    <entry name="panelItemSpacing" type="Int"><default>5</default><min>0</min><max>32</max></entry>
+    <entry name="panelSeparator"   type="String"><default>•</default></entry>
+    <entry name="panelItemSpacing" type="Int"><default>5</default><min>-16</min><max>32</max></entry>
     <entry name="panelFillWidth"   type="Bool"><default>false</default></entry>
     <entry name="panelSunTimesMode" type="String"><default>upcoming</default></entry>
     <entry name="panelMoonPhaseMode" type="String"><default>full</default></entry>
@@ -192,6 +197,8 @@
     <entry name="librewxrSnow"          type="Bool"><default>true</default></entry>
     <entry name="librewxrFormat"        type="String"><default>webp</default></entry>
     <entry name="librewxrTileSize"      type="String"><default>auto</default></entry>
+    <!-- Whether the "Options" panel (smoothing/snow mask/format/tile size) is expanded -->
+    <entry name="librewxrOptionsExpanded" type="Bool"><default>false</default></entry>
     <!-- Workaround for a plasmashell crash (SIGSEGV in Mesa, triggered when the
          Radar tab first paints) seen on hybrid-GPU (NVIDIA PRIME) Wayland sessions -->
     <entry name="radarGpuWorkaround"    type="Bool"><default>false</default></entry>
@@ -271,6 +278,7 @@
     <entry name="forecastHourlyLayout" type="String"><default>cards</default></entry>
     <entry name="forecastAutoOpen"     type="Bool"><default>true</default></entry>
     <entry name="forecastExpandAll"    type="Bool"><default>false</default></entry>
+    <entry name="forecastShowPastHours" type="Bool"><default>false</default></entry>
 
     <!-- ── Widget - daily forecast extra stats ───────────────────────── -->
     <entry name="forecastShowWind"       type="Bool"><default>true</default></entry>
@@ -281,6 +289,7 @@
     <entry name="forecastShowVisibility" type="Bool"><default>false</default></entry>
 
     <!-- ── Widget - hourly forecast extra stats ──────────────────────── -->
+    <entry name="forecastHourlyShowPrecipProb" type="Bool"><default>true</default></entry>
     <entry name="forecastHourlyShowWind"       type="Bool"><default>true</default></entry>
     <entry name="forecastHourlyShowPressure"   type="Bool"><default>false</default></entry>
     <entry name="forecastHourlyShowKpIndex"    type="Bool"><default>false</default></entry>
@@ -343,6 +352,18 @@
          Each alert type carries its own repeat interval; missing types fall back
          to enabled=true and a 30-minute default interval. -->
     <entry name="alertNotificationsTypeSettings" type="String"><default>{}</default></entry>
+
+    <!-- Alert sounds: an independent per-severity toggle (mirrors the visual
+         severity switches above) plus a single user-chosen sound file played
+         whenever an alert of an enabled severity fires. An empty string falls
+         back to the bundled/system default alert sound - see
+         root._defaultAlertSoundUrl() in main.qml. Only the main (active) alert
+         notification plays ada sound; the "upcoming" heads-up never does. -->
+    <entry name="alertNotificationsSoundYellowEnabled" type="Bool"><default>false</default></entry>
+    <entry name="alertNotificationsSoundOrangeEnabled" type="Bool"><default>false</default></entry>
+    <entry name="alertNotificationsSoundRedEnabled"    type="Bool"><default>false</default></entry>
+    <entry name="alertNotificationsSoundPurpleEnabled" type="Bool"><default>true</default></entry>
+    <entry name="alertNotificationsSoundFile" type="String"><default></default></entry>
 
     <entry name="notificationTodayEnabled"   type="Bool"><default>true</default></entry>
     <entry name="notificationTodayTime"      type="String"><default>08:00</default></entry>

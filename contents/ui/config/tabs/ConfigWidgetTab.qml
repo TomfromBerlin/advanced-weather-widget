@@ -47,8 +47,8 @@ ColumnLayout {
 
     /** Condition icon theme choices - adds KDE Symbolic and Custom options */
     readonly property var conditionIconThemeModel: [
-        { text: i18n("KDE Icon Theme"),        value: "kde"          },
-        { text: i18n("KDE Symbolic"),          value: "kde-symbolic" },
+        { text: i18n("KDE Icon Theme (Colorful)"),        value: "kde"          },
+        { text: i18n("KDE Icon Theme (Symbolic)"),          value: "kde-symbolic" },
         { text: i18n("Symbolic (Bundled)"),        value: "symbolic"     },
         { text: i18n("Flat Color (Bundled)"),      value: "flat-color"   },
         { text: i18n("3D Oxygen (Bundled)"),       value: "3d-oxygen"    },
@@ -68,6 +68,19 @@ ColumnLayout {
         for (var i = 0; i < conditionIconThemeModel.length; ++i)
             if (conditionIconThemeModel[i].value === theme) return i;
         return 0;
+    }
+
+    // Refresh both icon theme combos (General > Weather icon theme, Details >
+    // Icon theme) after the icon theme scope dialog (configAppearance.qml)
+    // applied a theme from another tab, or was cancelled.
+    Connections {
+        target: widgetTab.configRoot
+        function onIconThemesSynced() {
+            conditionIconThemeCombo.currentIndex = widgetTab.findConditionThemeIndex(
+                widgetTab.configRoot.cfg_conditionIconTheme);
+            widgetIconThemeCombo.currentIndex = widgetTab.findThemeIndex(
+                widgetTab.configRoot.cfg_widgetIconTheme);
+        }
     }
 
     PlasmaComponents.TabBar {
@@ -144,7 +157,11 @@ ColumnLayout {
                     model: widgetTab.conditionIconThemeModel
                     Component.onCompleted: currentIndex = widgetTab.findConditionThemeIndex(
                         widgetTab.configRoot.cfg_conditionIconTheme)
-                    onActivated: widgetTab.configRoot.cfg_conditionIconTheme = model[currentIndex].value
+                    // Asks "Apply everywhere / only here / Cancel" when the theme also
+                    // exists in other icon theme settings (see configAppearance.qml).
+                    // "KDE Symbolic" and "Custom…" are specific to this combo and
+                    // are applied directly, exactly as before.
+                    onActivated: widgetTab.configRoot.requestIconTheme("condition", model[currentIndex].value)
                 }
             }
             Button {
@@ -531,7 +548,9 @@ ColumnLayout {
                     model: widgetTab.iconThemeModel
                     Component.onCompleted: currentIndex = widgetTab.findThemeIndex(
                         widgetTab.configRoot.cfg_widgetIconTheme)
-                    onActivated: widgetTab.configRoot.cfg_widgetIconTheme = model[currentIndex].value
+                    // Asks "Apply everywhere / only here / Cancel" when the theme also
+                    // exists in other icon theme settings (see configAppearance.qml).
+                    onActivated: widgetTab.configRoot.requestIconTheme("details", model[currentIndex].value)
                 }
                 Label {
                     text: i18n("Size:")
@@ -857,6 +876,23 @@ ColumnLayout {
                     opacity: 0.7
                 }
             }
+            RowLayout {
+                Kirigami.FormData.label: i18n("Show past weather info for today:")
+                visible: widgetTab.configRoot.cfg_widgetLayoutMode !== "simple"
+                Switch {
+                    id: forecastShowPastHoursSwitch
+                    checked: widgetTab.configRoot.cfg_forecastShowPastHours
+                    onToggled: widgetTab.configRoot.cfg_forecastShowPastHours = checked
+                }
+                Label {
+                    text: forecastShowPastHoursSwitch.checked
+                        ? i18n("Already-passed hours for today stay in place, greyed out, instead of being removed")
+                        : i18n("Already-passed hours are removed from today's hourly forecast")
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                    opacity: 0.7
+                }
+            }
 
             // ═══════════════════════════════════════════════════════════════
             // SECTION: Daily Forecast Settings
@@ -979,6 +1015,19 @@ ColumnLayout {
                 visible: widgetTab.configRoot.cfg_widgetLayoutMode !== "simple"
             }
 
+            Item {
+                Layout.preferredHeight: Kirigami.Units.smallSpacing
+                visible: widgetTab.configRoot.cfg_widgetLayoutMode !== "simple"
+            }
+
+            RowLayout {
+                Kirigami.FormData.label: i18n("Precip probability:")
+                visible: widgetTab.configRoot.cfg_widgetLayoutMode !== "simple"
+                Switch {
+                    checked: widgetTab.configRoot.cfg_forecastHourlyShowPrecipProb
+                    onToggled: widgetTab.configRoot.cfg_forecastHourlyShowPrecipProb = checked
+                }
+            }
             RowLayout {
                 Kirigami.FormData.label: i18n("Pressure forecast:")
                 visible: widgetTab.configRoot.cfg_widgetLayoutMode !== "simple"

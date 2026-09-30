@@ -32,6 +32,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtPositioning
+import QtMultimedia
 import org.kde.plasma.plasmoid
 import org.kde.plasma.core as PlasmaCore
 import org.kde.notification
@@ -224,6 +225,15 @@ PlasmoidItem {
     property var hourlyData: []
     property int panelScrollIndex: 0
     property string updateText: ""
+    // Set/cleared directly by providers/aemet.js on every AEMET request
+    // (service.weatherRoot.aemetRateLimited = true/false) and read by
+    // ForecastView.qml to show a "rate limited, retrying" message instead of
+    // the generic "Loading hourly data..." placeholder. Was never declared
+    // here, so every assignment from aemet.js was a silent no-op (QML logs
+    // "Cannot assign to non-existent property" but does not throw or halt
+    // execution) - the indicator just never lit up. Harmless to the actual
+    // data fetch itself, but the indicator was dead code until this line.
+    property bool aemetRateLimited: false
 
     // Parsed activeLocation - staged so the _locName/_locLat/_locLon/hasSelectedTown
     // cascade fires in the next event loop tick (Qt.callLater) rather than synchronously
@@ -439,6 +449,14 @@ PlasmoidItem {
             : (Notification.CloseOnTimeout | Notification.SkipGrouping | Notification.DefaultEvent)
 
         actions: root._alertNotificationRepeatEnabled() ? [dismissAlertAction, postponeAlertAction] : []
+
+        // Stop the alert sound whenever this notification goes away, no
+        // matter how: Dismiss, Postpone, the notification's own close (×)
+        // button, or - when repeat is disabled - CloseOnTimeout. Without
+        // this, a long custom sound file (a multi-minute song, say) just
+        // keeps playing after the notification itself is gone, since
+        // nothing was ever telling alertMediaPlayer to stop.
+        onClosed: alertMediaPlayer.stop()
     }
 
     // One-time, non-critical heads-up for an alert that hasn't started yet.
@@ -452,6 +470,30 @@ PlasmoidItem {
         eventId: "notification"
         iconName: _bundledAlertIcon("storm-warning")
         flags: Notification.CloseOnTimeout | Notification.SkipGrouping | Notification.DefaultEvent
+    }
+
+    // Plays the (optional, per-severity) alert sound. A dedicated player
+    // rather than relying on the desktop notification's own sound handling -
+    // componentName is deliberately the generic "plasma_workspace" above (see
+    // the comment further up), which has no per-severity concept, so a custom
+    // sound choice has to be played by the applet itself.
+    //
+    // MediaPlayer, not SoundEffect: QSoundEffect only decodes uncompressed
+    // WAV/PCM on Linux - mp3/ogg/etc. silently fail to play regardless of
+    // which Qt Multimedia backend is installed (this is a hard limitation of
+    // QSoundEffect itself, not a missing-codec/missing-package issue). Since
+    // users can pick literally any audio file in the config UI, MediaPlayer
+    // is the type that actually honours that - it decodes whatever the
+    // installed FFmpeg/GStreamer backend supports, which in practice is
+    // everything. `source` is set right before each play() call in
+    // _playAlertSound() rather than bound, since the user can change the
+    // sound file at any time in the config UI.
+    MediaPlayer {
+        id: alertMediaPlayer
+        audioOutput: AudioOutput {}
+        onErrorOccurred: (error, errorString) => {
+            console.warn("[AdvancedWeatherWidget] alert sound failed to play:", errorString);
+        }
     }
 
     NotificationAction {
@@ -959,6 +1001,7 @@ PlasmoidItem {
     }
 
     function snowDepthText(cm) {
+        if (W.isNotSupported(cm)) return i18n("N/A");
         if (isNaN(cm)) return "--";
         if (_isImperial())
             return (cm / 2.54).toFixed(1) + " " + i18n("in");
@@ -1163,6 +1206,52 @@ PlasmoidItem {
         return true;
     }
 
+    /** Whether the given alert's severity has its sound switch on. Callers
+     *  are expected to have already run the alert through _alertColorAllowed()
+     *  (the notification-visibility gate) - this only adds the separate,
+     *  narrower "and also play a sound" gate on top, so it doesn't repeat
+     *  the legacy minSeverity fallback that function has. Extreme is
+     *  distinguished from Severe the same way as above: both map to color
+     *  "red", so severity (not color) decides the purple case. */
+    function _alertSoundAllowed(color, severity) {
+        var c = (color || "").toLowerCase();
+        var s = (severity || "").toLowerCase();
+        if (s === "extreme")
+            return Plasmoid.configuration.alertNotificationsSoundPurpleEnabled === true;
+        if (c === "red")
+            return Plasmoid.configuration.alertNotificationsSoundRedEnabled === true;
+        if (c === "orange")
+            return Plasmoid.configuration.alertNotificationsSoundOrangeEnabled === true;
+        if (c === "yellow")
+            return Plasmoid.configuration.alertNotificationsSoundYellowEnabled === true;
+        return false;
+    }
+
+    /** Fallback alert sound when the user hasn't chosen one: a short siren
+     *  bundled with the widget at contents/sounds/alert-default.ogg (a
+     *  sibling of contents/icons/ - same package layout _iconsBaseDir below
+     *  relies on), so it doesn't depend on any system sound theme being
+     *  installed. MediaPlayer (unlike SoundEffect) decodes Ogg fine - see
+     *  the MediaPlayer comment above. If this file is ever missing/
+     *  unreadable, playback just fails silently (see alertMediaPlayer's
+     *  onErrorOccurred) - the notification itself is unaffected either way,
+     *  since it's sent independently via KNotification. Keep this filename
+     *  in sync with defaultAlertSoundUrl in configNotifications.qml, which
+     *  uses the same bundled file for its "Test" button's fallback. */
+    function _defaultAlertSoundUrl() {
+        return Qt.resolvedUrl("../sounds/alert-default.ogg");
+    }
+
+    /** Plays the alert sound for a single alert, if its severity has sound
+     *  enabled. Only called for the main/active alert notification - the
+     *  "upcoming" heads-up is deliberately silent (see its own comment). */
+    function _playAlertSound(alert) {
+        if (!_alertSoundAllowed(alert.color, alert.severity))
+            return;
+        var file = Plasmoid.configuration.alertNotificationsSoundFile || "";
+        alertMediaPlayer.source = file.length > 0 ? file : _defaultAlertSoundUrl();
+        alertMediaPlayer.play();
+    }
 
     function _isAlertActiveNow(a, now) {
         var onset = a && a.onset ? new Date(a.onset) : null;
@@ -1339,7 +1428,8 @@ PlasmoidItem {
         return _bundledAlertIcon(stem);
     }
 
-    /** Sends (or refreshes) the persistent weather-alert notification for a single alert. */
+    /** Sends (or refreshes) the persistent weather-alert notification for a
+     *  single alert, and plays the alert sound if its severity has one enabled. */
     function _sendAlertNotification(alert) {
         var location = (_locName() || "").trim();
         _activeAlertNotificationFingerprint = _alertFingerprint(alert);
@@ -1355,6 +1445,7 @@ PlasmoidItem {
                 : Notification.LowUrgency;
         }
         weatherAlertNotification.sendEvent();
+        _playAlertSound(alert);
     }
 
     /** Body text for the upcoming-alert heads-up: same shape as
@@ -2093,6 +2184,23 @@ PlasmoidItem {
     // Icons base directory - resolved once so it works in all contexts
     readonly property string _iconsBaseDir: Qt.resolvedUrl("../icons/") + ""
 
+    // Ticks once a minute. moonPhaseLabel()/moonPhaseGlyph()/_moonUpcoming()
+    // below depend only on new Date() - unlike isNightTime() they don't
+    // even have sunrise/sunset text to fall back on for a once-a-day
+    // self-heal, so a live binding built directly on one of them (e.g. a
+    // panel chip in CompactView.qml, or DetailsView.qml's moon phase card)
+    // would otherwise freeze at whatever value was first evaluated and
+    // never change again for the rest of the session. Referencing this
+    // property first gives such bindings a real, changing QML dependency.
+    property int _nowTick: 0
+    Timer {
+        interval: 60000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: root._nowTick = (new Date()).getTime()
+    }
+
     function getSimpleModeIconSource() {
         var theme = Plasmoid.configuration.panelIconTheme || "wi-font";
         var code  = weatherCode;
@@ -2177,6 +2285,16 @@ PlasmoidItem {
     }
 
     function isNightTime() {
+        // _nowTick (added alongside the fix below): the comment beneath
+        // this already correctly diagnosed "this only runs when something
+        // explicitly triggers a recompute rather than continuously" as the
+        // cause of the stuck-until-refresh symptom - but treated it as
+        // unfixable overhead. Referencing _nowTick here fixes that: any
+        // live binding that calls isNightTime() directly (several exist in
+        // CompactView.qml's panel/tray icons) now gets new Date() as a
+        // real, continuously-ticking QML dependency instead of only the
+        // sunrise/sunset text's once-a-day one.
+        void (_nowTick);
         // Derive from sunrise/sunset first. This is what the forecast strip
         // already does when it picks its own icons (ForecastView.qml), so
         // going through the same route keeps the condition icon and the
@@ -2224,6 +2342,7 @@ PlasmoidItem {
     // ══════════════════════════════════════════════════════════════════════
 
     function moonPhaseLabel() {
+        void (_nowTick);
         // Each string is a literal so xgettext can extract all 8 translations.
         // moonPhaseNameKey() returns the English key; we map it here.
         var key = Moon.moonPhaseNameKey(Moon.moonAgeFromPhase(SC.getMoonIllumination(new Date()).phase));
@@ -2247,6 +2366,7 @@ PlasmoidItem {
     }
 
     function moonPhaseGlyph() {
+        void (_nowTick);
         return Moon.moonPhaseFontIcon(Moon.moonAgeFromPhase(SC.getMoonIllumination(new Date()).phase));
     }
 
@@ -2561,7 +2681,11 @@ PlasmoidItem {
 
     /** Returns "rise" or "set" depending on which moon event is next */
     function _moonUpcoming() {
-        var nowM = (new Date()).getHours() * 60 + (new Date()).getMinutes();
+        void (_nowTick);
+        // Location-local "now", same as isNightTime() - was previously the
+        // device's own getHours()/getMinutes(), which is wrong once the
+        // configured location is in a different timezone than the device.
+        var nowM = SunPath.nowMinsAt(locationUtcOffsetMins);
         var riseM = parseSunTimeMins(moonriseTimeText);
         var setM = parseSunTimeMins(moonsetTimeText);
         if (riseM >= 0 && nowM < riseM) return "rise";

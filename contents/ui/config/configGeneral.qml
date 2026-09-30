@@ -22,12 +22,18 @@ import org.kde.kcmutils as KCM
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.plasmoid
 import org.kde.plasma.plasma5support as Plasma5Support
+import org.kde.plasma.components as PlasmaComponents
+import "tabs"
 
-KCM.SimpleKCM {
+KCM.AbstractKCM {
     id: root
+    Kirigami.ColumnView.fillWidth: true
 
     // ── Config properties ─────────────────────────────────────────────────
     property string cfg_weatherProvider: "adaptive"
+    // Last explicitly-chosen (non-adaptive) provider - restored when Adaptive
+    // is turned back off. Kept in sync by onCfg_weatherProviderChanged below.
+    property string cfg_lastManualProvider: ""
     property string cfg_owApiKey: ""
     property string cfg_waApiKey: ""
     property string cfg_pwApiKey: ""
@@ -37,9 +43,11 @@ KCM.SimpleKCM {
     property string cfg_wbApiKey: ""
     property string cfg_qwApiKey: ""
     property string cfg_qwApiHost: ""
+    property string cfg_aemetApiKey: ""
     property bool cfg_radarEnabled: true
     property string cfg_radarProvider: "rainviewer"
     property string cfg_librewxrUrl: "https://api.librewxr.net"
+    property string cfg_librewxrWindQuality: "balanced"
     property bool cfg_radarGpuWorkaround: false
     property string cfg_alertsProvider: "native"
     property string cfg_fossAlertUrl: "https://alerts.kde.org"
@@ -62,7 +70,25 @@ KCM.SimpleKCM {
     readonly property bool isStormGlass: cfg_weatherProvider === "stormGlass"
     readonly property bool isWeatherbit: cfg_weatherProvider === "weatherbit"
     readonly property bool isQWeather: cfg_weatherProvider === "qWeather"
-    readonly property bool needsKeyUi: isOpenWeather || isWeatherApi || isPirateWeather || isVisualCrossing || isTomorrowIo || isStormGlass || isWeatherbit || isQWeather
+    readonly property bool isAemet: cfg_weatherProvider === "aemet"
+    readonly property bool needsKeyUi: isOpenWeather || isWeatherApi || isPirateWeather || isVisualCrossing || isTomorrowIo || isStormGlass || isWeatherbit || isQWeather || isAemet
+
+    // Owned by the Location page (not part of this tab set), but declared
+    // here too so this page can force it off for AEMET below - kcfg entries
+    // can be read/written from any config page that declares the matching
+    // cfg_ property, they all bind to the same on-disk value.
+    property bool cfg_autoDetectLocation: false
+
+    onCfg_weatherProviderChanged: {
+        if (cfg_weatherProvider !== "adaptive")
+            cfg_lastManualProvider = cfg_weatherProvider;
+        // AEMET needs your exact configured location (Spain-only, resolved
+        // to a municipio) - IP-based auto-detect is too imprecise for that,
+        // so turn it off the moment AEMET is chosen. Does not turn back on
+        // by itself if you switch away from AEMET again.
+        if (cfg_weatherProvider === "aemet")
+            cfg_autoDetectLocation = false;
+    }
 
     // ── API key test state ────────────────────────────────────────────────
     // 0 = idle, 1 = testing, 2 = success, 3 = error
@@ -80,17 +106,51 @@ KCM.SimpleKCM {
     readonly property string _radarGpuIssueUrl: "https://github.com/OWNER/REPO/issues/ISSUE_NUMBER"
 
     // 0 = idle, 1 = checking, 2 = active this session, 3 = saved but needs a
-    // logout, 4 = script missing/mismatched despite being enabled
+    // logout, 4 = script missing/mismatched despite being enabled, 5 = just
+    // turned off but still live for the rest of this session
     property int radarGpuTestState: 0
     property string radarGpuTestMessage: ""
     property var _radarGpuScriptPresent: undefined
     property var _radarGpuLiveActive: undefined
+
+    // Whether this is a systemd-managed session - decides both whether
+    // apply(false) even attempts a live env-var clear, and how the "Off -"
+    // message below is worded. 0 = still checking, 1 = systemd, 2 = not
+    // systemd (or systemctl unavailable). Detected once, not on every
+    // checkStatus() round trip, since it can't change during a session.
+    property int radarGpuSystemdState: 0
+
+    /** Exposed so ConfigRadarTab.qml (a separate file/scope) can call apply()/checkStatus()/logout() */
+    property alias radarGpuWorkaroundExec: radarGpuWorkaroundExec
 
     function _evaluateGpuStatus() {
         // Both checks are async and land independently - wait for both before
         // deciding on a combined status.
         if (root._radarGpuScriptPresent === undefined || root._radarGpuLiveActive === undefined)
             return;
+
+        if (!root.cfg_radarGpuWorkaround) {
+            // The switch is off - the script has already been removed (or
+            // never existed). This isn't reporting on the switch itself,
+            // just on what's still true for the CURRENTLY RUNNING session,
+            // since env-var changes can't be retroactively applied to a
+            // session that already started with the old value.
+            if (root._radarGpuLiveActive) {
+                root.radarGpuTestState = 5;
+                if (root.radarGpuSystemdState === 1) {
+                    root.radarGpuTestMessage = i18n("Off - the workaround script has been removed, so it won't load on your next login. Your system uses systemd, so anything launched fresh from here on may already reflect the cleared value - but anything already open (like a terminal you still have up) keeps showing the old one regardless, and a full log out and back in is the only guaranteed way to clear it everywhere.");
+                } else if (root.radarGpuSystemdState === 2) {
+                    root.radarGpuTestMessage = i18n("Off - the workaround script has been removed, so it won't load on your next login. This session already started with GPU compositing disabled though, and your system isn't systemd-managed, so there's no way to clear that live - it stays disabled (including anything you open freshly in this session) until you log out and back in.");
+                } else {
+                    root.radarGpuTestMessage = i18n("Off - the workaround script has been removed, so it won't load on your next login. This session already started with GPU compositing disabled though, so it stays that way (and anything already open, like a terminal, keeps showing the old value) until you log out and back in.");
+                }
+            } else {
+                root.radarGpuTestState = 0;
+                root.radarGpuTestMessage = "";
+            }
+            console.log("[Advanced Weather Widget Config] radar GPU workaround status:", root.radarGpuTestMessage || "(off, nothing lingering)");
+            return;
+        }
 
         if (root._radarGpuLiveActive) {
             root.radarGpuTestState = 2;
@@ -109,6 +169,12 @@ KCM.SimpleKCM {
         id: radarGpuWorkaroundExec
         engine: "executable"
         connectedSources: []
+        Component.onCompleted: {
+            // One-time, independent of checkStatus()'s recurring 2-way
+            // check - "is this session systemd-managed" doesn't change
+            // while the config page is open.
+            connectSource("if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then echo SYSTEMD:YES; else echo SYSTEMD:NO; fi");
+        }
         onNewData: function (sourceName, data) {
             var out = (data["stdout"] || "").toString().trim();
             if (sourceName.indexOf("if grep -qs") === 0) {
@@ -119,6 +185,12 @@ KCM.SimpleKCM {
                 root._radarGpuLiveActive = out.indexOf("LIVE:ACTIVE") !== -1;
                 console.log("[Advanced Weather Widget Config] QTWEBENGINE_CHROMIUM_FLAGS in this session:", root._radarGpuLiveActive ? "\"--disable-gpu-compositing\" - workaround is active" : "not set to the workaround value - not active in this session yet");
                 root._evaluateGpuStatus();
+            } else if (sourceName.indexOf("if [ -d /run/systemd/system ]") === 0) {
+                root.radarGpuSystemdState = out.indexOf("SYSTEMD:YES") !== -1 ? 1 : 2;
+                console.log("[Advanced Weather Widget Config] systemd-managed session:", root.radarGpuSystemdState === 1 ? "yes" : "no (or systemctl unavailable)");
+                // Refresh in case a status was already showing the
+                // generic/unknown wording while this was still in flight.
+                root._evaluateGpuStatus();
             } else if (data["exit code"] !== 0) {
                 console.warn("[Advanced Weather Widget Config] radar GPU workaround command failed:", sourceName, "stderr=", data["stderr"]);
             } else {
@@ -127,7 +199,26 @@ KCM.SimpleKCM {
             disconnectSource(sourceName);
         }
         function apply(enabled) {
-            var cmd = enabled ? "mkdir -p ~/.config/plasma-workspace/env && printf '%s\\n' 'export QTWEBENGINE_CHROMIUM_FLAGS=\"--disable-gpu-compositing\"' > " + root._radarGpuScriptPath : "rm -f " + root._radarGpuScriptPath;
+            var cmd;
+            if (enabled) {
+                cmd = "mkdir -p ~/.config/plasma-workspace/env && printf '%s\\n' 'export QTWEBENGINE_CHROMIUM_FLAGS=\"--disable-gpu-compositing\"' > " + root._radarGpuScriptPath;
+            } else {
+                // Removing the script only stops the NEXT login from picking
+                // this up - it can't retroactively change an env var that
+                // THIS session's already-running processes already inherited
+                // at login. Best-effort extra step, gated on an actual
+                // systemd check rather than just swallowing the error:
+                // Plasma 6's systemd-based session startup also pushes
+                // env-script exports into the systemd --user manager, so
+                // anything launched via systemd/dbus activation from here on
+                // (a fresh terminal, for instance - not one already open)
+                // may pick up the cleared value without waiting for a full
+                // logout. Plain `unset VARNAME` would NOT achieve this - it
+                // would only affect this one-shot subprocess, which exits
+                // immediately after, never touching the session it was
+                // spawned from.
+                cmd = "rm -f " + root._radarGpuScriptPath + "; if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then systemctl --user unset-environment QTWEBENGINE_CHROMIUM_FLAGS 2>/dev/null; fi";
+            }
             connectSource(cmd);
             // Any earlier status check is stale now - clear it until re-checked.
             root.radarGpuTestState = 0;
@@ -154,6 +245,25 @@ KCM.SimpleKCM {
     property int locationCheckState: 0
     property string locationCheckMessage: ""
     property int _locGen: 0
+
+    // Mirrors WeatherService.qml's _isSpainLocation() - this config page runs
+    // in its own QML context with no access to the running WeatherService
+    // instance, so the same countryCode-with-bbox-fallback check is
+    // duplicated here rather than shared.
+    function _isSpainLocation() {
+        var cc = Plasmoid.configuration.countryCode || "";
+        if (cc.length > 0)
+            return cc === "ES";
+        var lat = Plasmoid.configuration.latitude;
+        var lon = Plasmoid.configuration.longitude;
+        if (isNaN(lat) || isNaN(lon))
+            return false;
+        if (lat >= 35.8 && lat <= 43.9 && lon >= -9.5 && lon <= 4.4)
+            return true;    // peninsula + Balearics
+        if (lat >= 27.5 && lat <= 29.5 && lon >= -18.3 && lon <= -13.3)
+            return true;    // Canary Islands
+        return false;
+    }
 
     function verifyProviderLocation() {
         _locGen++;
@@ -240,6 +350,23 @@ KCM.SimpleKCM {
             qwHost = qwHost.replace(/\/+$/, "");
             var qwLoc = encodeURIComponent(lon.toFixed(2) + "," + lat.toFixed(2));
             url = qwHost + "/v7/weather/now?location=" + qwLoc + "&unit=m";
+        } else if (provider === "aemet") {
+            var aeKey = (cfg_aemetApiKey || "").trim();
+            if (!aeKey) {
+                locationCheckState = 0;
+                return;
+            }
+            if (!root._isSpainLocation()) {
+                locationCheckState = 3;
+                locationCheckMessage = i18n("AEMET only covers Spain - this location has no coverage.");
+                return;
+            }
+            // AEMET has no lat/lon endpoint - only the first ("self-discovery")
+            // hop is checked here, against a fixed always-valid municipio
+            // (28079 = Madrid), just to confirm the key/connectivity work.
+            // The real per-location municipio resolution happens at refresh
+            // time in the widget itself.
+            url = "https://opendata.aemet.es/opendata/api/prediccion/especifica/municipio/diaria/28079?api_key=" + encodeURIComponent(aeKey);
         } else {
             locationCheckState = 0;
             return;
@@ -257,6 +384,31 @@ KCM.SimpleKCM {
             if (_locGen !== myGen)
                 return;
             var pLabel = root.providerDisplayName(provider);
+            if (provider === "aemet") {
+                if (req.status === 200) {
+                    try {
+                        var aeBody = JSON.parse(req.responseText);
+                        if (aeBody.estado !== 200 || typeof aeBody.datos !== "string") {
+                            locationCheckState = 3;
+                            locationCheckMessage = i18n("AEMET error (code %1). Check your API key.", aeBody.estado);
+                            return;
+                        }
+                    } catch (e) {
+                        locationCheckState = 3;
+                        locationCheckMessage = i18n("Invalid response from AEMET.");
+                        return;
+                    }
+                    // Deliberately just the one request - it's enough to
+                    // confirm the key/connectivity/location work, without an
+                    // extra hop to the short-lived "datos" URL.
+                    locationCheckState = 2;
+                    locationCheckMessage = i18n("Location is available on %1.", pLabel);
+                } else {
+                    locationCheckState = 3;
+                    locationCheckMessage = i18n("Location is not available on %1 (HTTP %2). Try a different provider or location.", pLabel, req.status);
+                }
+                return;
+            }
             if (req.status === 200) {
                 locationCheckState = 2;
                 locationCheckMessage = i18n("Location is available on %1.", pLabel);
@@ -289,13 +441,15 @@ KCM.SimpleKCM {
             return "Weatherbit";
         if (p === "qWeather")
             return "QWeather";
+        if (p === "aemet")
+            return "AEMET";
         return "Open-Meteo";
     }
 
-    function testApiKey() {
+    function testApiKey(rawKey) {
         _testGen++;
         var myGen = _testGen;
-        var key = apiKeyField.text.trim();
+        var key = (rawKey || "").trim();
         if (!key) {
             apiTestState = 3;
             apiTestMessage = i18n("API key is empty.");
@@ -327,6 +481,11 @@ KCM.SimpleKCM {
             qwHost = qwHost.replace(/\/+$/, "");
             url = qwHost + "/v7/weather/now?location=23.30,42.70&unit=m";
             useAuthHeader = true;
+        } else if (root.isAemet) {
+            // Same fixed-reference-point approach as the other branches
+            // above, adapted to AEMET's municipio-code addressing: 28079 is
+            // Madrid, always valid, so this purely tests the key/connectivity.
+            url = "https://opendata.aemet.es/opendata/api/prediccion/especifica/municipio/diaria/28079?api_key=" + encodeURIComponent(key);
         } else {
             url = "https://api.weatherapi.com/v1/current.json?key=" + encodeURIComponent(key) + "&q=42.7,23.3";
         }
@@ -355,6 +514,22 @@ KCM.SimpleKCM {
                         apiTestMessage = i18n("Invalid response from QWeather.");
                         return;
                     }
+                } else if (root.isAemet) {
+                    try {
+                        var aeBody = JSON.parse(req.responseText);
+                        if (aeBody.estado !== 200 || typeof aeBody.datos !== "string") {
+                            apiTestState = 3;
+                            apiTestMessage = i18n("AEMET error (code %1). Check your API key.", aeBody.estado);
+                            return;
+                        }
+                    } catch (e) {
+                        apiTestState = 3;
+                        apiTestMessage = i18n("Invalid response from AEMET.");
+                        return;
+                    }
+                    // Deliberately just the one request above - it's enough
+                    // to confirm the key/connectivity work, without an extra
+                    // hop to the short-lived "datos" URL.
                 }
                 apiTestState = 2;
                 var pLabel = root.providerDisplayName(root.cfg_weatherProvider);
@@ -416,6 +591,10 @@ KCM.SimpleKCM {
         {
             text: i18n("QWeather (Key Required)"),
             value: "qWeather"
+        },
+        {
+            text: i18n("AEMET - Spain only (Key Required)"),
+            value: "aemet"
         }
     ]
 
@@ -426,695 +605,47 @@ KCM.SimpleKCM {
         return 0;
     }
 
-    ColumnLayout {
-        width: parent.width
-        spacing: 12
+    // ══════════════════════════════════════════════════════════════════════
+    // TAB BAR - 3 tabs: Provider, Radar, Weather Alerts
+    // ══════════════════════════════════════════════════════════════════════
+    header: PlasmaComponents.TabBar {
+        id: tabBar
 
-        // ══════════════════════════════════════════════════════════════
-        // SECTION: Adaptive Mode
-        // ══════════════════════════════════════════════════════════════
-        ColumnLayout {
+        PlasmaComponents.TabButton {
+            icon.name: "network-connect"
+            text: i18n("Provider")
+        }
+        PlasmaComponents.TabButton {
+            icon.name: "weather-showers-scattered"
+            text: i18n("Radar")
+        }
+        PlasmaComponents.TabButton {
+            icon.name: "task-attention"
+            text: i18n("Weather Alerts")
+        }
+    }
+
+    Kirigami.ScrollablePage {
+        anchors.fill: parent
+
+        StackLayout {
+            currentIndex: tabBar.currentIndex
             Layout.fillWidth: true
-            spacing: 0
 
-            // Section header
-            RowLayout {
-                Layout.fillWidth: true
-                Kirigami.Heading {
-                    text: i18n("Weather Provider")
-                    level: 4
-                }
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.2)
-                    opacity: 0.5
-                }
+            // TAB 0 - PROVIDER
+            ConfigProviderTab {
+                configRoot: root
             }
 
-            Item {
-                Layout.preferredHeight: 8
+            // TAB 1 - RADAR
+            ConfigRadarTab {
+                configRoot: root
             }
 
-            // Adaptive toggle row
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 12
-                Switch {
-                    id: adaptiveSwitch
-                    checked: root.isAdaptive
-                    onToggled: {
-                        if (checked) {
-                            root.cfg_weatherProvider = "adaptive";
-                        } else {
-                            // Fall back to Open-Meteo when disabling adaptive
-                            root.cfg_weatherProvider = "openMeteo";
-                            providerCombo.currentIndex = root.providerIndexFor("openMeteo");
-                        }
-                    }
-                }
-                Label {
-                    text: i18n("Adaptive (auto-fallback)")
-                    font.bold: true
-                    verticalAlignment: Text.AlignVCenter
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: adaptiveSwitch.toggle()
-                    }
-                }
+            // TAB 2 - WEATHER ALERTS
+            ConfigAlertsTab {
+                configRoot: root
             }
-
-            // Adaptive description - shown only when Adaptive is ON
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                Layout.topMargin: 4
-                visible: root.isAdaptive
-                type: Kirigami.MessageType.Information
-                text: i18n("Providers are tried in order until one succeeds:\nOpen-Meteo  →  BBC Weather  →  met.no  →  Pirate Weather  →  Visual Crossing  →  Tomorrow.io  →  StormGlass  →  Weatherbit  →  QWeather  →  OpenWeatherMap  →  WeatherAPI.com\nOpen-Meteo is always tried first - it is free and requires no API key.")
-            }
-
-            Item {
-                Layout.preferredHeight: 8
-            }
-
-            // Manual provider selector - hidden when Adaptive is ON
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 6
-                visible: !root.isAdaptive
-
-                Label {
-                    text: i18n("Provider:")
-                    opacity: 0.75
-                }
-
-                ComboBox {
-                    id: providerCombo
-                    Layout.preferredWidth: 280
-                    model: root.providerModel
-                    textRole: "text"
-                    currentIndex: root.providerIndexFor(root.cfg_weatherProvider)
-                    onActivated: {
-                        root.cfg_weatherProvider = root.providerModel[currentIndex].value;
-                        root.apiTestState = 0;
-                        root.locationCheckState = 0;
-                        root.verifyProviderLocation();
-                    }
-                }
-
-                // Provider sub-label
-                Label {
-                    visible: root.isAdaptive === false
-                    opacity: 0.6
-                    font.pixelSize: Kirigami.Theme.smallFont.pixelSize
-                    textFormat: Text.RichText
-                    onLinkActivated: function (link) {
-                        Qt.openUrlExternally(link);
-                    }
-                    text: {
-                        if (root.isOpenWeather)
-                            return i18n("Standard provider. API key required below.") + "<br/>" + i18n("Provider website:") + " <a href='https://openweathermap.org'>openweathermap.org</a>";
-                        if (root.isWeatherApi)
-                            return i18n("Alternative provider. API key required below.") + "<br/>" + i18n("Provider website:") + " <a href='https://www.weatherapi.com'>weatherapi.com</a>";
-                        if (root.isPirateWeather)
-                            return i18n("Dark Sky-compatible API with US alerts. API key required below.") + "<br/>" + i18n("Provider website:") + " <a href='https://pirateweather.net'>pirateweather.net</a>";
-                        if (root.isVisualCrossing)
-                            return i18n("Historical and forecast data provider. API key required below.") + "<br/>" + i18n("Provider website:") + " <a href='https://www.visualcrossing.com'>visualcrossing.com</a>";
-                        if (root.isTomorrowIo)
-                            return i18n("AI-powered weather intelligence. API key required below.") + "<br/>" + i18n("Provider website:") + " <a href='https://www.tomorrow.io'>tomorrow.io</a>";
-                        if (root.isStormGlass)
-                            return i18n("Marine and weather data provider. API key required below.") + "<br/>" + i18n("Provider website:") + " <a href='https://stormglass.io'>stormglass.io</a>";
-                        if (root.isWeatherbit)
-                            return i18n("High precision forecast provider. API key required below.") + "<br/>" + i18n("Provider website:") + " <a href='https://www.weatherbit.io'>weatherbit.io</a>";
-                        if (root.isQWeather)
-                            return i18n("Chinese weather provider with global coverage. API key required below.") + "<br/>" + i18n("Provider website:") + " <a href='https://www.qweather.com'>qweather.com</a>";
-                        if (root.cfg_weatherProvider === "metno")
-                            return i18n("Free Norwegian Meteorological Institute service. No API key needed.") + "<br/>" + i18n("Provider website:") + " <a href='https://met.no'>met.no</a>";
-                        if (root.cfg_weatherProvider === "bbc")
-                            return i18n("Free BBC Weather service (data from the Met Office). No API key needed.") + "<br/>" + i18n("Provider website:") + " <a href='https://www.bbc.com/weather'>bbc.com/weather</a>";
-                        return i18n("Free and open-source. No API key needed. Recommended.") + "<br/>" + i18n("Provider website:") + " <a href='https://open-meteo.com'>open-meteo.com</a>";
-                    }
-                    HoverHandler {
-                        cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    }
-                }
-
-                Kirigami.InlineMessage {
-                    Layout.fillWidth: true
-                    visible: root.locationCheckState === 2
-                    type: Kirigami.MessageType.Positive
-                    text: root.locationCheckMessage
-                }
-
-                Kirigami.InlineMessage {
-                    Layout.fillWidth: true
-                    visible: root.locationCheckState === 3
-                    type: Kirigami.MessageType.Error
-                    text: root.locationCheckMessage
-                }
-            }
-
-            // ── API Key section ───────────────────────────────────────
-            // Shown only when OpenWeather or WeatherAPI is selected
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 12
-                spacing: 8
-                visible: root.needsKeyUi && !root.isAdaptive
-
-                Label {
-                    text: {
-                        if (root.isOpenWeather)
-                            return i18n("OpenWeatherMap API Key:");
-                        if (root.isPirateWeather)
-                            return i18n("Pirate Weather API Key:");
-                        if (root.isVisualCrossing)
-                            return i18n("Visual Crossing API Key:");
-                        if (root.isTomorrowIo)
-                            return i18n("Tomorrow.io API Key:");
-                        if (root.isStormGlass)
-                            return i18n("StormGlass API Key:");
-                        if (root.isWeatherbit)
-                            return i18n("Weatherbit API Key:");
-                        if (root.isQWeather)
-                            return i18n("QWeather API Key:");
-                        return i18n("WeatherAPI.com API Key:");
-                    }
-                    font.bold: true
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    TextField {
-                        id: apiKeyField
-                        Layout.fillWidth: true
-                        placeholderText: {
-                            if (root.isOpenWeather)
-                                return i18n("Enter your OpenWeatherMap API key");
-                            if (root.isPirateWeather)
-                                return i18n("Enter your Pirate Weather API key");
-                            if (root.isVisualCrossing)
-                                return i18n("Enter your Visual Crossing API key");
-                            if (root.isTomorrowIo)
-                                return i18n("Enter your Tomorrow.io API key");
-                            if (root.isStormGlass)
-                                return i18n("Enter your StormGlass API key");
-                            if (root.isWeatherbit)
-                                return i18n("Enter your Weatherbit API key");
-                            if (root.isQWeather)
-                                return i18n("Enter your QWeather API key");
-                            return i18n("Enter your WeatherAPI.com key");
-                        }
-                        text: {
-                            if (root.isOpenWeather)
-                                return root.cfg_owApiKey;
-                            if (root.isPirateWeather)
-                                return root.cfg_pwApiKey;
-                            if (root.isVisualCrossing)
-                                return root.cfg_vcApiKey;
-                            if (root.isTomorrowIo)
-                                return root.cfg_tioApiKey;
-                            if (root.isStormGlass)
-                                return root.cfg_sgApiKey;
-                            if (root.isWeatherbit)
-                                return root.cfg_wbApiKey;
-                            if (root.isQWeather)
-                                return root.cfg_qwApiKey;
-                            return root.cfg_waApiKey;
-                        }
-                        echoMode: TextInput.Password
-                        selectByMouse: true
-                        onTextEdited: {
-                            root.apiTestState = 0;
-                            if (root.isOpenWeather)
-                                root.cfg_owApiKey = text;
-                            else if (root.isPirateWeather)
-                                root.cfg_pwApiKey = text;
-                            else if (root.isVisualCrossing)
-                                root.cfg_vcApiKey = text;
-                            else if (root.isTomorrowIo)
-                                root.cfg_tioApiKey = text;
-                            else if (root.isStormGlass)
-                                root.cfg_sgApiKey = text;
-                            else if (root.isWeatherbit)
-                                root.cfg_wbApiKey = text;
-                            else if (root.isQWeather)
-                                root.cfg_qwApiKey = text;
-                            else
-                                root.cfg_waApiKey = text;
-                        }
-                        onEditingFinished: {
-                            if (root.isOpenWeather)
-                                root.cfg_owApiKey = text.trim();
-                            else if (root.isPirateWeather)
-                                root.cfg_pwApiKey = text.trim();
-                            else if (root.isVisualCrossing)
-                                root.cfg_vcApiKey = text.trim();
-                            else if (root.isTomorrowIo)
-                                root.cfg_tioApiKey = text.trim();
-                            else if (root.isStormGlass)
-                                root.cfg_sgApiKey = text.trim();
-                            else if (root.isWeatherbit)
-                                root.cfg_wbApiKey = text.trim();
-                            else if (root.isQWeather)
-                                root.cfg_qwApiKey = text.trim();
-                            else
-                                root.cfg_waApiKey = text.trim();
-                        }
-                    }
-
-                    ToolButton {
-                        icon.name: "view-visible"
-                        checkable: true
-                        onCheckedChanged: apiKeyField.echoMode = checked ? TextInput.Normal : TextInput.Password
-                        ToolTip.text: i18n("Show/hide key")
-                        ToolTip.visible: hovered
-                    }
-
-                    Button {
-                        text: i18n("Clear")
-                        icon.name: "edit-clear"
-                        visible: apiKeyField.text.length > 0
-                        onClicked: {
-                            apiKeyField.text = "";
-                            root.apiTestState = 0;
-                            if (root.isOpenWeather)
-                                root.cfg_owApiKey = "";
-                            else if (root.isPirateWeather)
-                                root.cfg_pwApiKey = "";
-                            else if (root.isVisualCrossing)
-                                root.cfg_vcApiKey = "";
-                            else if (root.isTomorrowIo)
-                                root.cfg_tioApiKey = "";
-                            else if (root.isStormGlass)
-                                root.cfg_sgApiKey = "";
-                            else if (root.isWeatherbit)
-                                root.cfg_wbApiKey = "";
-                            else if (root.isQWeather)
-                                root.cfg_qwApiKey = "";
-                            else
-                                root.cfg_waApiKey = "";
-                        }
-                    }
-
-                    Button {
-                        text: root.apiTestState === 1 ? i18n("Testing…") : i18n("Test API Key")
-                        icon.name: "network-connect"
-                        enabled: apiKeyField.text.trim().length > 0 && root.apiTestState !== 1
-                        onClicked: root.testApiKey()
-                    }
-                }
-
-                Kirigami.InlineMessage {
-                    Layout.fillWidth: true
-                    visible: root.needsKeyUi && !root.isAdaptive && apiKeyField.text.trim().length === 0
-                    type: Kirigami.MessageType.Warning
-                    text: {
-                        var pLabel = root.providerDisplayName(root.cfg_weatherProvider);
-                        return i18n("An API key is required for %1. Weather data cannot be retrieved without it.", pLabel);
-                    }
-                }
-
-                Kirigami.InlineMessage {
-                    Layout.fillWidth: true
-                    visible: root.apiTestState === 2
-                    type: Kirigami.MessageType.Positive
-                    text: root.apiTestMessage
-                }
-
-                Kirigami.InlineMessage {
-                    Layout.fillWidth: true
-                    visible: root.apiTestState === 3
-                    type: Kirigami.MessageType.Error
-                    text: root.apiTestMessage
-                }
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: root.isOpenWeather && !root.isAdaptive && apiKeyField.text.trim().length > 0
-                type: Kirigami.MessageType.Information
-                showCloseButton: true
-                text: i18n("If you have just registered a new OpenWeatherMap API key, it might take up to 2 hours for it to become active. Please try again later if it doesn't work immediately.")
-            }
-
-            // ── QWeather API Host section ─────────────────────────────
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 8
-                spacing: 8
-                visible: root.isQWeather && !root.isAdaptive
-
-                Label {
-                    text: i18n("QWeather API Host:")
-                    font.bold: true
-                }
-                Label {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    opacity: 0.7
-                    text: i18n("Each QWeather project has a unique API host. Find yours at console.qweather.com under your project settings.")
-                }
-                TextField {
-                    id: qwHostField
-                    Layout.fillWidth: true
-                    placeholderText: "https://xxxxx.re.qweatherapi.com"
-                    text: root.cfg_qwApiHost
-                    selectByMouse: true
-                    onTextEdited: root.cfg_qwApiHost = text
-                    onEditingFinished: root.cfg_qwApiHost = text.trim()
-                }
-            }
-        }
-
-        // ══════════════════════════════════════════════════════════════
-        // SECTION: Radar
-        // ══════════════════════════════════════════════════════════════
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
-            RowLayout {
-                Layout.fillWidth: true
-                Kirigami.Heading {
-                    text: i18n("Radar")
-                    level: 4
-                }
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: Kirigami.Theme.textColor
-                    opacity: 0.5
-                }
-            }
-
-            Switch {
-                text: i18n("Show Radar tab in widget")
-                checked: root.cfg_radarEnabled
-                onToggled: root.cfg_radarEnabled = checked
-            }
-
-            RowLayout {
-                spacing: 8
-                visible: root.cfg_radarEnabled
-
-                Label {
-                    text: i18n("Radar provider:")
-                }
-                ComboBox {
-                    id: radarProviderCombo
-                    Layout.preferredWidth: 280
-                    model: [
-                        {
-                            text: i18n("Rain Viewer"),
-                            value: "rainviewer"
-                        },
-                        {
-                            text: i18n("LibreWXR"),
-                            value: "librewxr"
-                        }
-                    ]
-                    textRole: "text"
-                    currentIndex: root.cfg_radarProvider === "librewxr" ? 1 : 0
-                    onActivated: root.cfg_radarProvider = model[currentIndex].value
-                }
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: root.cfg_radarEnabled && root.cfg_radarProvider !== "librewxr"
-                showCloseButton: true
-                type: Kirigami.MessageType.Information
-                text: i18n("Radar provider: <a href='https://www.rainviewer.com/'>Rain Viewer</a><br/><br/>" + "The widget uses the free RainViewer API, which provides the past 2 hours of weather radar data in 10-minute intervals. Radar forecast is not supported.<br/><br/>" + "Rain Viewer does not guarantee the availability of radar data. " + "They do not conclude contracts with owners of this data. " + "The reason is that the owners can ask them to remove their data from Rain Viewer, " + "change the format, or stop sharing the data. " + "They are trying to keep radar data for as long as possible, " + "but sometimes the owners just stop providing the images.")
-                onLinkActivated: Qt.openUrlExternally(link)
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: root.cfg_radarEnabled && root.cfg_radarProvider === "librewxr"
-                showCloseButton: true
-                type: Kirigami.MessageType.Information
-                text: i18n("Radar provider: <a href='https://librewxr.net/'>LibreWXR</a><br/><br/>" + "LibreWXR is a free, open-source weather radar API. It combines real radar composites from NOAA, Canadian, and European sources with a global model fallback, and provides the past 2 hours of radar data plus a short nowcast. It also offers a free satellite (infrared) layer.<br/><br/>" + "Layer mode, radar color scheme, and motion arrows are selected directly in the Radar tab. The map follows your Plasma light/dark theme automatically.")
-                onLinkActivated: Qt.openUrlExternally(link)
-            }
-
-            // LibreWXR is self-hostable, so let the user point the radar and the
-            // alerts provider at their own instance instead of the public API.
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 8
-                spacing: 8
-                visible: root.cfg_radarEnabled && root.cfg_radarProvider === "librewxr"
-
-                Label {
-                    text: i18n("LibreWXR server:")
-                    font.bold: true
-                }
-                Label {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    opacity: 0.7
-                    text: i18n("Leave this empty to use the public server. Set it to your own address if you run a self-hosted LibreWXR instance.")
-                }
-                TextField {
-                    id: librewxrUrlField
-                    Layout.fillWidth: true
-                    placeholderText: "https://api.librewxr.net"
-                    text: root.cfg_librewxrUrl
-                    selectByMouse: true
-                    onTextEdited: root.cfg_librewxrUrl = text
-                    onEditingFinished: root.cfg_librewxrUrl = text.trim()
-                }
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                showCloseButton: true
-                visible: root.cfg_radarEnabled && (root.cfg_owApiKey || "").trim() === ""
-                type: Kirigami.MessageType.Information
-                text: i18n("To unlock additional map layers (Rain, Clouds, Temperature, Wind, Pressure): " + "disable Adaptive mode, select OpenWeatherMap as your weather provider, and enter your API key above. When you are ready, you can enable Adaptive mode again.")
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                showCloseButton: true
-                visible: root.cfg_radarEnabled && (root.cfg_owApiKey || "").trim() !== ""
-                type: Kirigami.MessageType.Warning
-                text: i18n("<b>Why OWM layers may not match RainViewer radar</b><br/><br/>" + "OWM precipitation/cloud layers are <b>static model tiles</b> - they show a smoothed NWP (Numerical Weather Prediction) output, not actual radar returns. " + "They represent where the model <i>thinks</i> it is raining based on interpolation between weather stations and model runs.<br/><br/>" + "RainViewer uses <b>real weather radar composites</b> from radar stations - actual measured reflectivity updated every 2-10 minutes. " + "This discrepancy is expected and known.")
-            }
-
-            Item {
-                Layout.preferredHeight: 4
-            }
-
-            Switch {
-                visible: root.cfg_radarEnabled
-                text: i18n("Workaround radar map crashes on hybrid-GPU systems (EXPERIMENTAL)")
-                checked: root.cfg_radarGpuWorkaround
-                onToggled: {
-                    root.cfg_radarGpuWorkaround = checked;
-                    radarGpuWorkaroundExec.apply(checked);
-                    if (checked)
-                        radarGpuWorkaroundExec.checkStatus();
-                }
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: root.cfg_radarEnabled && root.cfg_radarGpuWorkaround
-                showCloseButton: false
-                type: Kirigami.MessageType.Warning
-                text: i18n("<b>Hybrid-GPU / NVIDIA PRIME + Wayland crash workaround</b><br/><br/>" + "On some hybrid-GPU laptops running Wayland, the Radar tab's embedded browser view can crash the whole Plasma shell the moment it first paints, due to a driver-level conflict between the two GPUs. This option disables GPU-accelerated compositing inside that browser view to avoid it.<br/><br/>" + "Only enable this if you're actually experiencing that crash - it costs some rendering performance on the radar map.<br/><br/>" + `<b>This needs a log out and back in to take effect</b>, since it has to be set before Plasma starts. It also applies to the whole session, so any other app that embeds a Chromium-based browser view will pick up the same setting.
-                <br/><br/>` + "If you enable this option, the following file will be created in: ~/.config/plasma-workspace/env/advanced-weather-widget-radar-gpu-workaround.sh")
-                actions: [
-                    Kirigami.Action {
-                        text: i18n("Log Out Now…")
-                        icon.name: "system-log-out"
-                        onTriggered: radarGpuWorkaroundExec.logout()
-                    }
-                ]
-            }
-
-            RowLayout {
-                visible: root.cfg_radarEnabled && root.cfg_radarGpuWorkaround
-                Layout.fillWidth: true
-
-                Button {
-                    text: root.radarGpuTestState === 1 ? i18n("Checking…") : i18n("Check Status")
-                    icon.name: "view-refresh"
-                    enabled: root.radarGpuTestState !== 1
-                    onClicked: radarGpuWorkaroundExec.checkStatus()
-                }
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: root.cfg_radarEnabled && root.cfg_radarGpuWorkaround && root.radarGpuTestState === 2
-                type: Kirigami.MessageType.Positive
-                text: root.radarGpuTestMessage
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: root.cfg_radarEnabled && root.cfg_radarGpuWorkaround && root.radarGpuTestState === 3
-                type: Kirigami.MessageType.Warning
-                text: root.radarGpuTestMessage
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: root.cfg_radarEnabled && root.cfg_radarGpuWorkaround && root.radarGpuTestState === 4
-                type: Kirigami.MessageType.Error
-                text: root.radarGpuTestMessage
-            }
-        }
-
-        Item {
-            Layout.preferredHeight: 8
-        }
-
-        // ══════════════════════════════════════════════════════════════
-        // SECTION: Weather Alerts
-        // ══════════════════════════════════════════════════════════════
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
-            RowLayout {
-                Layout.fillWidth: true
-                Kirigami.Heading {
-                    text: i18n("Weather Alerts")
-                    level: 4
-                }
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: Kirigami.Theme.textColor
-                    opacity: 0.5
-                }
-            }
-
-            RowLayout {
-                spacing: 8
-
-                Label {
-                    text: i18n("Alerts provider:")
-                }
-                ComboBox {
-                    id: alertsProviderCombo
-                    Layout.preferredWidth: 280
-                    model: [
-                        {
-                            text: i18n("MeteoAlarm + NOAA NWS (Native)"),
-                            value: "native"
-                        },
-                        {
-                            text: i18n("LibreWXR"),
-                            value: "librewxr"
-                        },
-                        {
-                            text: i18n("FOSS Public Alert Server"),
-                            value: "foss"
-                        }
-                    ]
-                    textRole: "text"
-                    currentIndex: {
-                        for (var i = 0; i < model.length; i++)
-                            if (model[i].value === root.cfg_alertsProvider)
-                                return i;
-                        return 0;
-                    }
-                    onActivated: root.cfg_alertsProvider = model[currentIndex].value
-                }
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: root.cfg_alertsProvider === "native"
-                showCloseButton: true
-                type: Kirigami.MessageType.Information
-                text: i18n("Alerts provider: <a href='https://www.meteoalarm.org/'>EUMETNET MeteoAlarm</a> + <a href='https://www.weather.gov/'>NOAA NWS</a><br/><br/>" + "European locations use the official MeteoAlarm feeds (38 countries), US locations use the NOAA National Weather Service alerts API, with met.no MetAlerts as a fallback. If your weather provider delivers its own alerts (e.g. WeatherAPI.com, Pirate Weather), those are used directly.")
-                onLinkActivated: Qt.openUrlExternally(link)
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: root.cfg_alertsProvider === "librewxr"
-                showCloseButton: true
-                type: Kirigami.MessageType.Information
-                text: i18n("Alerts provider: <a href='https://librewxr.net/'>LibreWXR</a><br/><br/>" + "LibreWXR is a free, open-source weather API that aggregates official CAP alerts worldwide (WMO Severe Weather Information Centre, NOAA NWS, and others) and matches them to your exact location. Alert notifications work the same as with the native provider.")
-                onLinkActivated: Qt.openUrlExternally(link)
-            }
-
-            Kirigami.InlineMessage {
-                Layout.fillWidth: true
-                visible: root.cfg_alertsProvider === "foss"
-                showCloseButton: true
-                type: Kirigami.MessageType.Information
-                text: i18n("Alerts provider: <a href='https://alerts.kde.org/'>FOSS Public Alert Server</a><br/><br/>" + "KDE's FOSS Public Alert Server collects official severe-weather warnings in CAP format from agencies worldwide and matches them to your exact location. Alert notifications work the same as with the native provider.")
-                onLinkActivated: Qt.openUrlExternally(link)
-            }
-        }
-
-        Item {
-            Layout.preferredHeight: 8
-        }
-
-        // ══════════════════════════════════════════════════════════════
-        // SECTION: Data Refresh
-        // ══════════════════════════════════════════════════════════════
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 6
-
-            RowLayout {
-                Layout.fillWidth: true
-                Kirigami.Heading {
-                    text: i18n("Data Refresh")
-                    level: 4
-                }
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: Kirigami.Theme.textColor
-                    opacity: 0.5
-                }
-            }
-
-            Item {
-                Layout.preferredHeight: 4
-            }
-
-            Switch {
-                text: i18n("Refresh weather automatically")
-                checked: root.cfg_autoRefresh
-                onToggled: root.cfg_autoRefresh = checked
-            }
-
-            RowLayout {
-                spacing: 8
-                enabled: root.cfg_autoRefresh
-                opacity: root.cfg_autoRefresh ? 1.0 : 0.5
-
-                Label {
-                    text: i18n("Interval:")
-                }
-                SpinBox {
-                    from: 5
-                    to: 180
-                    value: root.cfg_refreshIntervalMinutes
-                    onValueModified: root.cfg_refreshIntervalMinutes = value
-                }
-                Label {
-                    text: i18n("minutes")
-                }
-            }
-        }
-
-        Item {
-            Layout.preferredHeight: 16
         }
     }
 }

@@ -132,6 +132,28 @@ QtObject {
         // Strip trailing slash
         return h.replace(/\/+$/, "");
     }
+    function _aemetKey() {
+        return (Plasmoid.configuration.aemetApiKey || "").trim();
+    }
+
+    // ── Private: location helpers ────────────────────────────────────────
+    /**
+     * True when the configured location is in Spain - used to gate AEMET,
+     * which has zero coverage elsewhere. Prefers the resolved countryCode;
+     * falls back to a quick bounding-box check (peninsula + Balearics +
+     * Canary Islands) when it isn't set yet (e.g. right after a location
+     * switch, before reverse-geocoding lands), mirroring alerts.js's
+     * _looksLikeUS() fallback for the same situation.
+     */
+    function _isSpainLocation() {
+        if (countryCode.length > 0)
+            return countryCode === "ES";
+        var lat = latitude, lon = longitude;
+        if (isNaN(lat) || isNaN(lon)) return false;
+        if (lat >= 35.8 && lat <= 43.9 && lon >= -9.5 && lon <= 4.4) return true;    // peninsula + Balearics
+        if (lat >= 27.5 && lat <= 29.5 && lon >= -18.3 && lon <= -13.3) return true; // Canary Islands
+        return false;
+    }
 
     // ── Private: space weather cache timestamp ──────────────────────────
     property real _lastSpaceWeatherFetch: 0
@@ -154,6 +176,64 @@ QtObject {
     // repeat refreshes for the same location skip the extra lookup request.
     property string _bbcLocId: ""
     property string _bbcLocKey: ""
+    // AEMET is keyed by a 5-digit INE municipio code, resolved by nearest-
+    // match against the ~8,100-entry master list - now a bundled local
+    // dataset (providers/data/aemetMunicipios.js, see aemet.js's
+    // "MUNICIPALITY RESOLUTION" comment) rather than a live fetch, so this
+    // is populated synchronously on first use and never touches the
+    // network. The resolved id itself is additionally cached keyed by
+    // rounded coordinates, same pattern as _bbcLocId/_bbcLocKey above, and
+    // seeded from persisted config (see _persistAemetMunicipio below) so a
+    // Plasma restart doesn't even repeat the nearest-match scan for a
+    // location that hasn't changed.
+    property var _aemetMunicipios: null
+    property string _aemetMuniId: Plasmoid.configuration.aemetMuniId || ""
+    property string _aemetMuniKey: Plasmoid.configuration.aemetMuniKey || ""
+
+    /** Write-through for the resolved municipio, called by aemet.js's
+     *  _resolveMunicipio once a lookup succeeds. Guarded so a config schema
+     *  without these keys degrades to in-memory-only caching (the previous
+     *  behaviour) instead of throwing inside a provider callback. */
+    function _persistAemetMunicipio(k, id) {
+        try {
+            Plasmoid.configuration.aemetMuniKey = k;
+            Plasmoid.configuration.aemetMuniId = id;
+            Plasmoid.configuration.writeConfig();
+        } catch (e) {
+            console.warn("[WeatherService] Could not persist AEMET municipio:", e);
+        }
+    }
+    // The daily (7-day) and hourly (~48h) products - time-cached (20 min,
+    // see aemet.js's AEMET_CACHE_TTL_MS) rather than just per-refresh-
+    // generation, since AEMET only regenerates these a few times a day, so
+    // most refreshes at typical widget intervals can reuse the last fetch
+    // outright. Shared by fetchCurrent's current-conditions refinement, a
+    // single expanded Forecast day, and "expand all days" - see aemet.js's
+    // _withDailyData()/_withHourlyData().
+    property var _aemetDailyCache: null
+    property var _aemetDailyPending: null
+    property var _aemetHourlyCache: null
+    property var _aemetHourlyPending: null
+    // Timestamps (ms) of AEMET requests actually sent in roughly the last
+    // 60 s - aemet.js's _aemetBudgetOk()/_aemetBudgetRecord() self-throttle
+    // against this so the widget can't push its own key over AEMET's
+    // ~50 req/min limit; see aemet.js's "429 (rate limit) DEFENSE" comment.
+    property var _aemetRequestLog: []
+    // Consecutive AEMET failures for the *sole-provider* auto-retry below -
+    // drives its exponential backoff. Reset to 0 by a successful fetch (see
+    // aemet.js's fetchCurrent combine()) or by refreshNow(force=true) - i.e.
+    // a manual refresh starts backoff fresh rather than wherever it had
+    // escalated to. Switching weatherProvider away from "aemet" does NOT
+    // reset it - harmless, since the timer's onTriggered re-checks
+    // weatherProvider and no-ops if it's no longer "aemet" - but backoff
+    // will resume from its old point if the person switches back to AEMET
+    // while it's still failing.
+    property int _aemetRetryAttempt: 0
+    // Set by aemet.js when any AEMET request comes back HTTP 429 (its
+    // documented ~50 req/min-per-key limit) - checked once, in
+    // _tryProvider's chain-exhaustion branch below, to show a specific
+    // "rate limited" message instead of a generic "Failed: AEMET".
+    property bool _aemetRateLimited: false
     // True once the current provider has written native alerts for this
     // refresh generation - lets _fetchAlertsIfNeeded() decide whether to
     // fall back to AlertsJS without having to blank weatherRoot.weatherAlerts
@@ -180,7 +260,7 @@ QtObject {
                 console.warn("[WeatherService] Safety timeout - forcing loading=false");
                 weatherRoot.loading = false;
                 service._clearUpdateMetadata();
-                weatherRoot.updateText = i18n("Update timed out. Tap to retry.");
+                weatherRoot.updateText = i18n("Update timed out. Click the refresh button to retry.");
             }
         }
     }
@@ -192,6 +272,27 @@ QtObject {
         onTriggered: service._refreshRelativeUpdateText()
     }
 
+    // Auto-retry for AEMET specifically, when it was the only provider
+    // tried (explicit selection, no fallback) and failed outright. AEMET is
+    // the one provider here with a real per-key rate limit, so - unlike
+    // every other provider's failure, which just waits for the next
+    // scheduled refresh or a manual tap - a rate-limited or transient
+    // AEMET failure gets an automatic retry. The interval backs off
+    // exponentially with service._aemetRetryAttempt (set by _tryProvider
+    // just before restart(); see there for the exact schedule and for why a
+    // FIXED retry interval was itself a real contributor to hitting 429 in
+    // the first place) rather than a flat 15 s every time, so a sustained
+    // failure (bad key, genuine outage, or - before this refactor - a
+    // wrong municipio code 404ing every attempt) tapers off instead of
+    // hammering AEMET indefinitely at a constant rate.
+    property Timer _aemetAutoRetryTimer: Timer {
+        repeat: false
+        onTriggered: {
+            if ((Plasmoid.configuration.weatherProvider || "adaptive") === "aemet")
+                service.refreshNow(false);
+        }
+    }
+
     // ── Public methods ────────────────────────────────────────────────────
 
     /** Full weather refresh - current + daily forecast.
@@ -199,6 +300,15 @@ QtObject {
     function refreshNow(force) {
         _refreshGen++;
         _safetyTimer.stop();
+        if (force) {
+            // A manual refresh is the person actively asking "try again now"
+            // (e.g. right after fixing an API key) - don't leave them
+            // waiting out however far the automatic backoff had climbed,
+            // and don't let a stale queued auto-retry fire a second,
+            // redundant fetch shortly after this one.
+            _aemetAutoRetryTimer.stop();
+            _aemetRetryAttempt = 0;
+        }
 
         var r = weatherRoot;
         if (!r.hasSelectedTown) {
@@ -222,7 +332,21 @@ QtObject {
         _nativeAqiSetThisGen = false;
 
         var provider = Plasmoid.configuration.weatherProvider || "adaptive";
-        var chain = (provider === "adaptive") ? ["openMeteo", "bbc", "metno", "pirateWeather", "visualCrossing", "tomorrowIo", "stormGlass", "weatherbit", "qWeather", "openWeather", "weatherApi"] : [provider];
+        var chain;
+        if (provider === "adaptive") {
+            // AEMET is intentionally not part of adaptive mode - it's the one
+            // provider here with a real per-key rate limit, and it should only
+            // ever be in play when someone has explicitly chosen it, not
+            // silently engaged for Spain locations under a mode whose whole
+            // point is "just make it work without me thinking about it".
+            chain = ["openMeteo", "bbc", "metno", "pirateWeather", "visualCrossing", "tomorrowIo", "stormGlass", "weatherbit", "qWeather", "openWeather", "weatherApi"];
+        } else {
+            // Explicitly selecting a single provider (including "aemet") means
+            // exactly that provider, with no fallback - a failure shows
+            // "Failed: <name>" via _tryProvider's chain-exhaustion path rather
+            // than silently substituting a different provider's data.
+            chain = [provider];
+        }
         chain._gen = _refreshGen;
 
         _tryProvider(chain, 0);
@@ -309,6 +433,17 @@ QtObject {
         if (ap === "bbc") {
             var _pB = _providers();
             if (!_pB || !_pB.fetchHourlyDirect(ap, service, dateStr, callback))
+                callback([]);
+            return;
+        }
+
+        // ── AEMET ─────────────────────────────────────────────────────────────
+        // Needs the same async municipio-resolution step as BBC's location-id
+        // lookup above, so it's delegated to its own module rather than
+        // inlined here like the single-request providers below.
+        if (ap === "aemet") {
+            var _pAe = _providers();
+            if (!_pAe || !_pAe.fetchHourlyDirect(ap, service, dateStr, callback))
                 callback([]);
             return;
         }
@@ -828,6 +963,8 @@ QtObject {
     }
 
     function _providerUrl(p) {
+        if (p === "aemet")
+            return "https://www.aemet.es";
         if (p === "openWeather")
             return "https://openweathermap.org";
         if (p === "weatherApi")
@@ -852,6 +989,8 @@ QtObject {
     }
 
     function _providerLinkLabel(p) {
+        if (p === "aemet")
+            return "AEMET";
         if (p === "openWeather")
             return "OpenWeather";
         if (p === "weatherApi")
@@ -882,7 +1021,7 @@ QtObject {
         var providerLink = "<a href='" + service._providerUrl(provider) + "'>" + service._providerLinkLabel(provider) + "</a>";
         if (provider !== "openWeather" && provider !== "weatherApi" && provider !== "metno" && provider !== "bbc"
             && provider !== "pirateWeather" && provider !== "visualCrossing" && provider !== "tomorrowIo"
-            && provider !== "stormGlass" && provider !== "weatherbit" && provider !== "qWeather") {
+            && provider !== "stormGlass" && provider !== "weatherbit" && provider !== "qWeather" && provider !== "aemet") {
             var mi = W.openMeteoModelInfo(openMeteoModel, countryCode);
             if (mi)
                 providerLink += " (<a href='" + mi.url + "'>" + mi.name + "</a>)";
@@ -899,6 +1038,8 @@ QtObject {
     }
 
     function _providerLabel(p) {
+        if (p === "aemet")
+            return "AEMET";
         if (p === "openWeather")
             return "OpenWeather";
         if (p === "weatherApi")
@@ -929,6 +1070,36 @@ QtObject {
         if (idx >= chain.length) {
             weatherRoot.loading = false;
             _safetyTimer.stop();
+            if (chain.length === 1 && chain[0] === "aemet") {
+                service._clearUpdateMetadata();
+                // Exponential backoff, capped at 5 minutes - long enough to
+                // ride out almost any transient issue or several full
+                // AEMET rate-limit windows, short enough that the widget
+                // still recovers promptly once the underlying problem
+                // clears. Replaces a flat 15 s (65 s if rate-limited)
+                // retry, which - combined with _fetchAemetJsonR's one
+                // retry per hop on both the daily and hourly products -
+                // could alone reach up to 8 requests every 15 s (~32/min)
+                // during a sustained failure, a meaningful fraction of
+                // AEMET's own ~50 req/min quota from this widget's retries
+                // alone. See aemet.js's "429 (rate limit) DEFENSE" comment
+                // for the client-side request budget that backs this up.
+                _aemetRetryAttempt = Math.min(_aemetRetryAttempt + 1, 10); // cap growth, not just the resulting delay
+                var maxRetryMs = 5 * 60 * 1000;
+                var backoffFactor = Math.pow(2, _aemetRetryAttempt - 1);
+                if (_aemetRateLimited) {
+                    weatherRoot.updateText = i18n("AEMET: request limit reached - retrying automatically in a minute.");
+                    _aemetAutoRetryTimer.interval = Math.min(65000 * backoffFactor, maxRetryMs);
+                } else {
+                    weatherRoot.updateText = i18n("AEMET: request failed - retrying automatically.");
+                    _aemetAutoRetryTimer.interval = Math.min(15000 * backoffFactor, maxRetryMs);
+                }
+                _aemetRateLimited = false;
+                _failed = [];
+                _fetchAlertsIfNeeded();
+                _aemetAutoRetryTimer.restart();
+                return;
+            }
             var names = chain.map(function (p) {
                 return _providerLabel(p);
             });
@@ -1181,5 +1352,80 @@ QtObject {
             } catch (e) {}
         };
         req.send();
+    }
+
+    /**
+     * Backfills wind and UV from Open-Meteo (free, keyless, no rate limit)
+     * for whichever fields AEMET's own response left NaN. AEMET's per-key
+     * rate limit means "fetched fine overall but missing wind/UV for this
+     * specific hour or day" is a real, recurring situation here, not just
+     * an occasional gap - so unlike a provider with no rate limit at all,
+     * it's worth a small supplementary request rather than just showing
+     * "--". Only ever fills gaps: never overwrites a real AEMET value.
+     * Patches weatherData (current) and dailyData (the 7-day array) in one
+     * request; see aemet.js's fetchHourly for the separate per-day hourly
+     * patch, mirroring how _fetchSunTimesOpenMeteo above only handles
+     * sunrise/sunset/UTC offset.
+     */
+    function _fetchWindUvOpenMeteo() {
+        var gen = _refreshGen;
+        var r = weatherRoot;
+        var tz = (Plasmoid.configuration.timezone || "").trim();
+        var days = Math.min(Math.max((r.dailyData || []).length, 1), 16);
+        var url = "https://api.open-meteo.com/v1/forecast"
+            + "?latitude=" + Plasmoid.configuration.latitude + "&longitude=" + Plasmoid.configuration.longitude
+            + "&timezone=" + encodeURIComponent(tz.length > 0 ? tz : "auto")
+            + "&current=wind_speed_10m,wind_direction_10m,uv_index"
+            + "&daily=wind_speed_10m_max,wind_direction_10m_dominant,uv_index_max"
+            + "&forecast_days=" + days;
+        var req2 = new XMLHttpRequest();
+        req2.open("GET", url);
+        req2.onreadystatechange = function () {
+            if (req2.readyState !== XMLHttpRequest.DONE) return;
+            if (_refreshGen !== gen) return;
+            if (req2.status !== 200) return;
+            try {
+                var d = JSON.parse(req2.responseText);
+
+                if (r.weatherData && d.current) {
+                    var patched = Object.assign({}, r.weatherData);
+                    var curChanged = false;
+                    if (isNaN(patched.windKmh) && d.current.wind_speed_10m !== undefined) {
+                        patched.windKmh = d.current.wind_speed_10m; curChanged = true;
+                    }
+                    if (isNaN(patched.windDirection) && d.current.wind_direction_10m !== undefined) {
+                        patched.windDirection = d.current.wind_direction_10m; curChanged = true;
+                    }
+                    if (isNaN(patched.uvIndex) && d.current.uv_index !== undefined) {
+                        patched.uvIndex = d.current.uv_index; curChanged = true;
+                    }
+                    if (curChanged) r.weatherDataStaged = patched;
+                }
+
+                if (d.daily && d.daily.time && r.dailyData && r.dailyData.length > 0) {
+                    var nd = r.dailyData.slice();
+                    var dailyChanged = false;
+                    for (var i = 0; i < d.daily.time.length; i++) {
+                        for (var j = 0; j < nd.length; j++) {
+                            if (nd[j].dateStr !== d.daily.time[i]) continue;
+                            var day = Object.assign({}, nd[j]);
+                            if (isNaN(day.windKmh) && d.daily.wind_speed_10m_max && d.daily.wind_speed_10m_max[i] !== undefined) {
+                                day.windKmh = d.daily.wind_speed_10m_max[i]; dailyChanged = true;
+                            }
+                            if (isNaN(day.windDir) && d.daily.wind_direction_10m_dominant && d.daily.wind_direction_10m_dominant[i] !== undefined) {
+                                day.windDir = d.daily.wind_direction_10m_dominant[i]; dailyChanged = true;
+                            }
+                            if (isNaN(day.uvMax) && d.daily.uv_index_max && d.daily.uv_index_max[i] !== undefined) {
+                                day.uvMax = d.daily.uv_index_max[i]; dailyChanged = true;
+                            }
+                            nd[j] = day;
+                            break;
+                        }
+                    }
+                    if (dailyChanged) r.dailyData = nd;
+                }
+            } catch (e) {}
+        };
+        req2.send();
     }
 }

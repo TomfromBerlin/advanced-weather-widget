@@ -37,6 +37,17 @@ Kirigami.FormLayout {
     /** Emitted when the user clicks Configure… to push the panel sub-page */
     signal pushSubPage
 
+    // Refresh the icon theme combo after the icon theme scope dialog
+    // (configAppearance.qml) applied a theme from another tab or was cancelled.
+    Connections {
+        target: panelTab.configRoot
+        function onIconThemesSynced() {
+            iconThemeCombo.syncFromConfig();
+            simpleIconStyleCombo.syncFromConfig();
+            mlIconStyleCombo.syncFromConfig();
+        }
+    }
+
     readonly property bool isSystemTrayConfig: configRoot.isSystemTrayConfig === true
     readonly property string _panelInfoMode: isSystemTrayConfig ? "simple" : configRoot.cfg_panelInfoMode
     readonly property int _simpleLayoutType: isSystemTrayConfig ? 2 : configRoot.cfg_panelSimpleLayoutType
@@ -46,13 +57,6 @@ Kirigami.FormLayout {
     readonly property string _badgeColor: isSystemTrayConfig ? configRoot.cfg_trayCompressedBadgeColor : configRoot.cfg_compressedBadgeColor
     readonly property double _badgeOpacity: isSystemTrayConfig ? configRoot.cfg_trayCompressedBadgeOpacity : configRoot.cfg_compressedBadgeOpacity
     readonly property bool _isSimpleCompressed: _panelInfoMode === "simple" && _simpleLayoutType === 2
-
-    function _setSimpleIconStyle(value) {
-        if (isSystemTrayConfig)
-            configRoot.cfg_traySimpleIconStyle = value;
-        else
-            configRoot.cfg_panelSimpleIconStyle = value;
-    }
 
     function _setBadgePosition(value) {
         if (isSystemTrayConfig)
@@ -300,20 +304,20 @@ Kirigami.FormLayout {
             textRole: "text"
             model: panelTab.isSystemTrayConfig ? [
                 {
-                    text: i18n("Colorful"),
+                    text: i18n("KDE Icon Theme (Colorful)"),
                     value: "colorful"
                 },
                 {
-                    text: i18n("Symbolic"),
+                    text: i18n("KDE Icon Theme (Symbolic)"),
                     value: "symbolic"
                 }
             ] : [
                 {
-                    text: i18n("Colorful"),
+                    text: i18n("KDE Icon Theme (Colorful)"),
                     value: "colorful"
                 },
                 {
-                    text: i18n("Symbolic"),
+                    text: i18n("KDE Icon Theme (Symbolic)"),
                     value: "symbolic"
                 },
                 {
@@ -337,20 +341,36 @@ Kirigami.FormLayout {
                     value: "custom"
                 }
             ]
-            Component.onCompleted: {
+            // Re-read the simple icon style. Also called via iconThemesSynced when
+            // another tab applied a theme here, or the scope dialog was cancelled.
+            function syncFromConfig() {
+                var idx = 0;
                 for (var i = 0; i < model.length; ++i)
                     if (model[i].value === panelTab._simpleIconStyle) {
-                        currentIndex = i;
+                        idx = i;
                         break;
                     }
+                currentIndex = idx;
             }
-            onActivated: panelTab._setSimpleIconStyle(model[currentIndex].value)
+            Component.onCompleted: syncFromConfig()
+            // Asks "Apply everywhere / only here / Cancel" - "Colorful"/"Symbolic"
+            // and "Custom…" are all automatic-or-overridden renderings of the same
+            // KDE system icon source (see configAppearance.qml), so any of them can
+            // trigger the dialog if another setting would change too.
+            onActivated: panelTab.configRoot.requestIconTheme("panel-simple", model[currentIndex].value)
         }
         Button {
             visible: !panelTab.isSystemTrayConfig && panelTab._simpleIconStyle === "custom"
             text: i18n("Configure weather icons…")
             icon.name: "color-picker"
-            onClicked: panelTab.configRoot.conditionIconDialog.openWithContext("panel")
+            // Routed through Panel Items (same destination as the Single-line/
+            // Multi-line "Set your own icons…" flow) instead of jumping straight
+            // to the Condition Icons dialog - the Condition row's pencil there
+            // opens the identical dialog, sharing the same cfg_panelCustomIcons.
+            onClicked: {
+                panelTab.configRoot.initPanelModel();
+                panelTab.pushSubPage();
+            }
         }
     }
 
@@ -377,8 +397,7 @@ Kirigami.FormLayout {
                     value: "manual"
                 }
             ]
-            currentIndex: panelTab.configRoot.cfg_simpleIconSizeMode === "large"
-                ? 1 : (panelTab.configRoot.cfg_simpleIconSizeMode === "manual" ? 2 : 0)
+            currentIndex: panelTab.configRoot.cfg_simpleIconSizeMode === "large" ? 1 : (panelTab.configRoot.cfg_simpleIconSizeMode === "manual" ? 2 : 0)
             onCurrentIndexChanged: {
                 var newMode = model[currentIndex].value;
                 if (panelTab.configRoot.cfg_simpleIconSizeMode !== newMode) {
@@ -420,9 +439,7 @@ Kirigami.FormLayout {
             }) : allSizes
             currentIndex: {
                 if (panelTab.configRoot.cfg_simpleIconSizeMode !== "manual") {
-                    var target = panelTab.configRoot.cfg_simplePanelDim > 0
-                        ? panelTab.configRoot._autoIconSz(panelTab._simpleLayoutType, panelTab.configRoot.cfg_simpleIconSizeMode)
-                        : (panelTab.configRoot.cfg_simpleIconAutoSz > 0 ? panelTab.configRoot.cfg_simpleIconAutoSz : 24);
+                    var target = panelTab.configRoot.cfg_simplePanelDim > 0 ? panelTab.configRoot._autoIconSz(panelTab._simpleLayoutType, panelTab.configRoot.cfg_simpleIconSizeMode) : (panelTab.configRoot.cfg_simpleIconAutoSz > 0 ? panelTab.configRoot.cfg_simpleIconAutoSz : 24);
                     var best = 0;
                     for (var i = 0; i < model.length; i++) {
                         if (Math.abs(model[i].value - target) < Math.abs(model[best].value - target))
@@ -466,8 +483,7 @@ Kirigami.FormLayout {
                     value: "manual"
                 }
             ]
-            currentIndex: panelTab.configRoot.cfg_simpleFontSizeMode === "large"
-                ? 1 : (panelTab.configRoot.cfg_simpleFontSizeMode === "manual" ? 2 : 0)
+            currentIndex: panelTab.configRoot.cfg_simpleFontSizeMode === "large" ? 1 : (panelTab.configRoot.cfg_simpleFontSizeMode === "manual" ? 2 : 0)
             onCurrentIndexChanged: {
                 var newMode = model[currentIndex].value;
                 if (panelTab.configRoot.cfg_simpleFontSizeMode !== newMode) {
@@ -481,13 +497,7 @@ Kirigami.FormLayout {
             enabled: panelTab.configRoot.cfg_simpleFontSizeMode === "manual"
             from: 8
             to: 72
-            value: panelTab.configRoot.cfg_simpleFontSizeMode !== "manual"
-                ? (panelTab.configRoot.cfg_simplePanelDim > 0
-                    ? panelTab.configRoot._autoFontSz(panelTab._simpleLayoutType, panelTab.configRoot.cfg_simpleFontSizeMode)
-                    : (panelTab.configRoot.cfg_simpleFontAutoSz > 0
-                        ? panelTab.configRoot.cfg_simpleFontAutoSz
-                        : panelTab.configRoot.cfg_simpleFontSizeManual))
-                : panelTab.configRoot.cfg_simpleFontSizeManual
+            value: panelTab.configRoot.cfg_simpleFontSizeMode !== "manual" ? (panelTab.configRoot.cfg_simplePanelDim > 0 ? panelTab.configRoot._autoFontSz(panelTab._simpleLayoutType, panelTab.configRoot.cfg_simpleFontSizeMode) : (panelTab.configRoot.cfg_simpleFontAutoSz > 0 ? panelTab.configRoot.cfg_simpleFontAutoSz : panelTab.configRoot.cfg_simpleFontSizeManual)) : panelTab.configRoot.cfg_simpleFontSizeManual
             onValueModified: {
                 if (panelTab.configRoot.cfg_simpleFontSizeMode === "manual")
                     panelTab.configRoot.cfg_simpleFontSizeManual = value;
@@ -833,20 +843,35 @@ Kirigami.FormLayout {
                     value: "custom"
                 }
             ]
-            Component.onCompleted: {
+            // Re-read cfg_panelMultilineIconStyle. Also called via iconThemesSynced
+            // when another tab applied a theme here, or the scope dialog was cancelled.
+            function syncFromConfig() {
+                var idx = 0;
                 for (var i = 0; i < model.length; ++i)
                     if (model[i].value === panelTab.configRoot.cfg_panelMultilineIconStyle) {
-                        currentIndex = i;
+                        idx = i;
                         break;
                     }
+                currentIndex = idx;
             }
-            onActivated: panelTab.configRoot.cfg_panelMultilineIconStyle = model[currentIndex].value
+            Component.onCompleted: syncFromConfig()
+            // Asks "Apply everywhere / only here / Cancel" - "Colorful"/"Symbolic"
+            // and "Custom…" are all automatic-or-overridden renderings of the same
+            // KDE system icon source (see configAppearance.qml), so any of them can
+            // trigger the dialog if another setting would change too.
+            onActivated: panelTab.configRoot.requestIconTheme("panel-multiline", model[currentIndex].value)
         }
         Button {
             visible: panelTab.configRoot.cfg_panelMultilineIconStyle === "custom"
             text: i18n("Configure…")
             icon.name: "color-picker"
-            onClicked: panelTab.configRoot.conditionIconDialog.openWithContext("panel")
+            // Routed through Panel Items, matching every other panel-mode entry
+            // point - the Condition row's pencil there opens the identical
+            // dialog, sharing the same cfg_panelCustomIcons.
+            onClicked: {
+                panelTab.configRoot.initPanelModel();
+                panelTab.pushSubPage();
+            }
         }
         ComboBox {
             id: mlIconSizeCombo
@@ -921,23 +946,23 @@ Kirigami.FormLayout {
             model: [
                 {
                     text: i18n("Bullet  \u2022"),
-                    value: " \u2022 "
+                    value: "\u2022"
                 },
                 {
                     text: i18n("Pipe  |"),
-                    value: " | "
+                    value: "|"
                 },
                 {
                     text: i18n("Dash  \u2013"),
-                    value: " \u2013 "
+                    value: "\u2013"
                 },
                 {
-                    text: i18n("Space"),
-                    value: "   "
+                    text: i18n("None"),
+                    value: ""
                 },
                 {
                     text: i18n("Small circle  \u26ac"),
-                    value: " \u26ac "
+                    value: "\u26ac"
                 },
                 {
                     text: i18n("Custom\u2026"),
@@ -975,7 +1000,8 @@ Kirigami.FormLayout {
         Kirigami.FormData.label: i18n("Item spacing:")
         spacing: 8
         SpinBox {
-            from: 0
+            id: itemSpacingSpin
+            from: -16
             to: 32
             value: panelTab.configRoot.cfg_panelItemSpacing
             onValueModified: panelTab.configRoot.cfg_panelItemSpacing = value
@@ -984,6 +1010,14 @@ Kirigami.FormLayout {
             text: "px"
             opacity: 0.65
         }
+    }
+    Kirigami.InlineMessage {
+        visible: panelTab._panelInfoMode !== "multiline" && panelTab._panelInfoMode !== "simple" && panelTab.configRoot.cfg_panelItemSpacing < 0
+        Layout.fillWidth: true
+        Layout.columnSpan: 2
+        type: Kirigami.MessageType.Warning
+        text: i18n("Negative spacing pulls panel items closer together than their natural gap and can make icons or text overlap.")
+        showCloseButton: false
     }
     CheckBox {
         visible: panelTab._panelInfoMode === "single"
@@ -1150,14 +1184,21 @@ Kirigami.FormLayout {
                     value: "custom"
                 }
             ]
-            Component.onCompleted: {
+            // Re-read cfg_panelIconTheme. Also called via iconThemesSynced when
+            // another tab applied a theme here, or the scope dialog was cancelled.
+            function syncFromConfig() {
+                var idx = 0;
                 for (var i = 0; i < model.length; ++i)
                     if (model[i].value === panelTab.configRoot.cfg_panelIconTheme) {
-                        currentIndex = i;
+                        idx = i;
                         break;
                     }
+                currentIndex = idx;
             }
-            onActivated: panelTab.configRoot.cfg_panelIconTheme = model[currentIndex].value
+            Component.onCompleted: syncFromConfig()
+            // Asks "Apply everywhere / only here / Cancel" when the theme also
+            // exists in other icon theme settings (see configAppearance.qml).
+            onActivated: panelTab.configRoot.requestIconTheme("panel", model[currentIndex].value)
         }
         Label {
             text: i18n("Size:")

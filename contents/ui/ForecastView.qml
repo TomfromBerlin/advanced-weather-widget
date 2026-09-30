@@ -60,6 +60,13 @@ Item {
     property int _expandAllFetchGeneration: 0
     readonly property int _expandAllMaxConcurrentFetches: 1
 
+    // ── Past hours (today): grey out in place instead of removing ──────────
+    // Off by default - "today"'s already-passed hours are filtered out of the
+    // hourly forecast exactly as before. When on, they stay at their normal
+    // timestamp position and are dimmed instead of disappearing.
+    readonly property bool showPastHoursGreyed: Plasmoid.configuration.forecastShowPastHours === true
+    readonly property real _pastHourOpacity: 0.4
+
     function _cancelExpandAllFetch(clearData) {
         _expandAllFetchGeneration++;
         _expandAllQueue = [];
@@ -249,6 +256,7 @@ Item {
         : (_forecastShowTempUnit ? 82 : 58)
 
     // ── Hourly forecast extra stats ─────────────────────────────────
+    readonly property bool _hourlyShowPrecipProb: Plasmoid.configuration.forecastHourlyShowPrecipProb !== false
     readonly property bool _hourlyShowWind:       Plasmoid.configuration.forecastHourlyShowWind !== false
     readonly property bool _hourlyShowPressure:   Plasmoid.configuration.forecastHourlyShowPressure === true
     readonly property bool _hourlyShowKpIndex:    Plasmoid.configuration.forecastHourlyShowKpIndex === true
@@ -265,9 +273,9 @@ Item {
         return c;
     }
     readonly property int _hourlyCardHeight: 200 + _hourlyExtraRowCount * 26
-    // Sum of strip rows always shown: time(18) + icon(48) + trend(32) + temp(18) + precip(18) + 4×2 spacing
-    readonly property int _hourlyStripBaseHeight: 142
-    readonly property int _hourlyStripContentHeight: _hourlyStripBaseHeight + (_hourlyShowWind ? 30 : 0) + _hourlyExtraRowCount * 20
+    // Sum of strip rows always shown: time(18) + icon(60) + trend(56) + temp(32) + 3×2 spacing
+    readonly property int _hourlyStripBaseHeight: 172
+    readonly property int _hourlyStripContentHeight: _hourlyStripBaseHeight + (_hourlyShowPrecipProb ? 20 : 0) + (_hourlyShowWind ? 30 : 0) + _hourlyExtraRowCount * 20 + (!_hourlyShowPrecipSum ? 20 : 0)
     // Reserve room for the horizontal scrollbar so it never covers the last row or the
     // day-section divider. Breeze (and other classic themes) render an always-visible,
     // thicker inline scrollbar than the default Plasma overlay, so size the reserve to
@@ -435,6 +443,34 @@ Item {
                         return dayStartMs >= hourlyLimitMs;
                     }
 
+                    readonly property bool _dayOutsideAemetHourlyRange: {
+                        if ((Plasmoid.configuration.weatherProvider || "adaptive") !== "aemet")
+                            return false;
+                        if (!weatherRoot || !weatherRoot.dailyData || !weatherRoot.dailyData[0] || !weatherRoot.dailyData[dataIndex])
+                            return false;
+                        // AEMET's "horaria" product covers today + tomorrow BY
+                        // CALENDAR DAY - day 3 onward has only the 7-day "diaria"
+                        // summary, with no hourly breakdown. This used to compare
+                        // the day's midnight against a rolling (now + 48h), which
+                        // is wrong at every hour of the day: day+2's midnight is
+                        // always earlier than now+48h, so the third day was never
+                        // flagged and sat on "Loading hourly data…" forever even
+                        // though there was nothing to load. Compare calendar dates
+                        // instead, relative to the forecast's own "today"
+                        // (dailyData[0] - AEMET's own local date, the same source
+                        // as every row's dateStr) rather than the device clock, so
+                        // a device/municipality timezone difference can't shift it.
+                        var todayParts = (weatherRoot.dailyData[0].dateStr || "").split("-");
+                        var dayParts = (weatherRoot.dailyData[dataIndex].dateStr || "").split("-");
+                        if (todayParts.length < 3 || dayParts.length < 3)
+                            return false;
+                        var todayUtc = Date.UTC(parseInt(todayParts[0], 10), parseInt(todayParts[1], 10) - 1, parseInt(todayParts[2], 10));
+                        var dayUtc = Date.UTC(parseInt(dayParts[0], 10), parseInt(dayParts[1], 10) - 1, parseInt(dayParts[2], 10));
+                        if (isNaN(todayUtc) || isNaN(dayUtc))
+                            return false;
+                        return Math.round((dayUtc - todayUtc) / 86400000) >= 2;
+                    }
+
                     readonly property bool _dayIsLoading: {
                         var dateStr = (weatherRoot && weatherRoot.dailyData[dataIndex])
                             ? (weatherRoot.dailyData[dataIndex].dateStr || "") : "";
@@ -466,7 +502,7 @@ Item {
 
                             // ── visibility flags for the optional per-day stat items,
                             // used to decide when to show a "•" separator between them ──
-                            readonly property bool _windVisible: forecastRoot.showWind && !isNaN(weatherRoot.dailyData[dataIndex].windKmh)
+                            readonly property bool _windVisible: forecastRoot.showWind && (((Plasmoid.configuration.weatherProvider || "adaptive") === "aemet") || !isNaN(weatherRoot.dailyData[dataIndex].windKmh))
                             readonly property bool _pressureVisible: Plasmoid.configuration.forecastShowPressure === true
                             readonly property bool _kpVisible: Plasmoid.configuration.forecastShowKpIndex === true
                             readonly property bool _uvVisible: Plasmoid.configuration.forecastShowUvIndex === true
@@ -827,7 +863,11 @@ Item {
                             visible: !_dayIsLoading && ((forecastRoot.expandAll && !forecastRoot._collapsedDays[weatherRoot.dailyData[dataIndex].dateStr || ""]) || forecastRoot.expandedIndex === index) && _dayHourlyData.length === 0
                             text: _dayOutsideQWeatherHourlyRange
                                 ? i18n("QWeather provides hourly forecasts for up to 168 hours (7 days). Daily forecast is still available for this date.")
-                                : i18n("Loading hourly data…")
+                                : _dayOutsideAemetHourlyRange
+                                    ? i18n("AEMET provides hourly forecasts for up to 48 hours. Daily forecast is still available for this date.")
+                                    : (((Plasmoid.configuration.weatherProvider || "adaptive") === "aemet") && weatherRoot && weatherRoot.aemetRateLimited)
+                                        ? i18n("AEMET: request limit reached for the moment. This will retry automatically - please wait a minute.")
+                                        : i18n("Loading hourly data…")
                             color: forecastRoot.themeTextColor
                             font: weatherRoot ? weatherRoot.wf(11, false) : Qt.font({})
                             wrapMode: Text.Wrap
@@ -888,15 +928,32 @@ Item {
                                             if (!t || t === "--") return -1;
                                             var p = t.split(":"); return p.length < 2 ? -1 : parseInt(p[0],10)*60+parseInt(p[1],10);
                                         }
-                                        // For today (index 0) filter out past hours; keep 1 hour buffer so current hour stays visible
+                                        // For today (index 0), hours before "now" (minus a 1 hour buffer so
+                                        // the current hour stays visible) are either dropped, or - when
+                                        // forecastShowPastHours is enabled - kept at their normal position and
+                                        // flagged isPast so the delegates can grey them out instead.
+                                        // The appended closing entry (isNextDay - the following day's 00:00, see the provider
+                                        // fetchers) reads as minutes=0 same as a just-past midnight hour, so it's exempted here -
+                                        // otherwise it would always look "in the past" and get filtered/greyed out of "today".
                                         var nowMins = -1;
                                         if (index === 0) {
                                             var _now = new Date();
                                             nowMins = _now.getHours() * 60 + _now.getMinutes() - 60;
                                         }
-                                        var source = nowMins >= 0
-                                            ? _dayHourlyData.filter(function(h) { var m = toMins(h.hour); return m < 0 || m >= nowMins; })
-                                            : _dayHourlyData;
+                                        var source;
+                                        if (forecastRoot.showPastHoursGreyed) {
+                                            source = nowMins >= 0
+                                                ? _dayHourlyData.map(function(h) {
+                                                      var m = toMins(h.hour);
+                                                      var isPast = h.isNextDay !== true && m >= 0 && m < nowMins;
+                                                      return isPast ? Object.assign({}, h, { isPast: true }) : h;
+                                                  })
+                                                : _dayHourlyData;
+                                        } else {
+                                            source = nowMins >= 0
+                                                ? _dayHourlyData.filter(function(h) { var m = toMins(h.hour); return h.isNextDay === true || m < 0 || m >= nowMins; })
+                                                : _dayHourlyData;
+                                        }
                                         if (!forecastRoot.showSunEvents)
                                             return source;
                                         var rise = toMins(_daySunriseText);
@@ -920,8 +977,26 @@ Item {
                                         return result;
                                     }
 
-                                    readonly property int colW: 100
                                     readonly property int colSpacing: 0
+                                    readonly property int _minColW: 100
+                                    // Visual height of the curve's own band (where the line moves
+                                    // between min/max temp). The canvas itself is taller than this
+                                    // (it extends down to wash color through the rows below), but
+                                    // rows are laid out as if it were still this height, and the
+                                    // curve's y-values stay within it, so nothing shifts position.
+                                    readonly property int _graphNominalHeight: 56
+                                    // Fill the available width evenly across columns when there are
+                                    // few enough hours that the fixed minimum would leave blank space
+                                    // on the right; fall back to that minimum (and horizontal
+                                    // scrolling, via the Flickable above) once more columns are
+                                    // needed than fit at it.
+                                    readonly property int colW: {
+                                        var n = _hourlyWithSun.length;
+                                        if (n <= 0 || width <= 0)
+                                            return _minColW;
+                                        var fitW = Math.floor(width / n) - colSpacing;
+                                        return Math.max(_minColW, fitW);
+                                    }
 
                                     // Column of rows
                                     Item {
@@ -940,6 +1015,22 @@ Item {
                                             return arr;
                                         }
 
+                                        // ── Column dividers (GNOME Weather-style grid) ──
+                                        // Thin lines at each interior column boundary, behind
+                                        // everything else since they're declared first.
+                                        Repeater {
+                                            model: Math.max(0, stripScrollView._hourlyWithSun.length - 1)
+                                            delegate: Rectangle {
+                                                required property int index
+                                                x: (index + 1) * (stripScrollView.colW + stripScrollView.colSpacing) - 1
+                                                y: 0
+                                                width: 1
+                                                height: stripContent.height
+                                                color: forecastRoot.themeTextColor
+                                                opacity: 0.1
+                                            }
+                                        }
+
                                         // ── Row 0: time labels ──────────────────────
                                         Row {
                                             id: stripTimeRow
@@ -951,6 +1042,7 @@ Item {
                                                     required property var modelData
                                                     width: stripScrollView.colW
                                                     height: 18
+                                                    opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
                                                     Label {
                                                         anchors.centerIn: parent
                                                         text: {
@@ -981,18 +1073,15 @@ Item {
                                                 delegate: Item {
                                                     required property var modelData
                                                     width: stripScrollView.colW
-                                                    height: 48
+                                                    height: 60
+                                                    opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
                                                     WeatherIcon {
                                                         anchors.centerIn: parent
                                                         iconInfo: {
                                                             if (modelData.isSunrise)
-                                                                return IconResolver.resolve("sunrise", 32, forecastRoot.iconsBaseDir,
-                                                                    forecastRoot.widgetIconTheme === "kde" ? "flat-color" :
-                                                                    (forecastRoot.widgetIconTheme === "wi-font" || forecastRoot.widgetIconTheme === "custom") ? "symbolic" : forecastRoot.widgetIconTheme);
+                                                                return IconResolver.resolve("sunrise", 32, forecastRoot.iconsBaseDir, forecastRoot.itemsIconTheme);
                                                             if (modelData.isSunset)
-                                                                return IconResolver.resolve("sunset", 32, forecastRoot.iconsBaseDir,
-                                                                    forecastRoot.widgetIconTheme === "kde" ? "flat-color" :
-                                                                    (forecastRoot.widgetIconTheme === "wi-font" || forecastRoot.widgetIconTheme === "custom") ? "symbolic" : forecastRoot.widgetIconTheme);
+                                                                return IconResolver.resolve("sunset", 32, forecastRoot.iconsBaseDir, forecastRoot.itemsIconTheme);
                                                             var isNight = false;
                                                             if (modelData.hour && modelData.hour !== "--") {
                                                                 var p2 = modelData.hour.split(":");
@@ -1006,7 +1095,7 @@ Item {
                                                             }
                                                             return forecastRoot.resolveConditionIcon(modelData.code||0, isNight, forecastRoot.iconSz);
                                                         }
-                                                        iconSize: 44
+                                                        iconSize: 56
                                                         iconColor: forecastRoot.themeTextColor
                                                     }
                                                 }
@@ -1014,14 +1103,21 @@ Item {
                                         }
 
                                         // ── Trend line canvas ────────────────────────
+                                        // Taller than just the curve's own band: it extends all the
+                                        // way to the bottom of the strip so the temperature color
+                                        // washes down through the rows below (fading with depth),
+                                        // while the curve itself still only moves within the nominal
+                                        // band at the top. Declared before those rows, so it paints
+                                        // behind them.
                                         Canvas {
                                             id: trendCanvas
                                             x: 0
                                             y: stripIconRow.y + stripIconRow.height + 2
                                             width: stripContent.width
-                                            height: 32
+                                            height: stripContent.height - y
                                             property var temps: stripContent._temps
                                             onTempsChanged: requestPaint()
+                                            onHeightChanged: requestPaint()
 
                                             // Detect light theme by background luminance
                                             readonly property bool darkTheme: {
@@ -1047,56 +1143,116 @@ Item {
                                                     if (pts[i].tempC > maxT) maxT = pts[i].tempC;
                                                 }
                                                 var range = maxT - minT;
-                                                var pad = 5;
+                                                var pad = 6;
+                                                var curveH = stripScrollView._graphNominalHeight;
                                                 var cw = stripScrollView.colW + stripScrollView.colSpacing;
+                                                // Each point sits at the center of its column, same as every
+                                                // label row above/below it (the divider lines mark the actual
+                                                // column boundaries, so every column - including the first and
+                                                // last - reads the same way).
                                                 function xOf(col) { return col * cw + cw / 2; }
                                                 function yOf(t) {
-                                                    if (range < 0.01) return height / 2;
-                                                    return pad + (1 - (t - minT) / range) * (height - pad * 2);
+                                                    if (range < 0.01) return curveH * 0.35;
+                                                    return pad + (1 - (t - minT) / range) * (curveH - pad * 2);
                                                 }
-                                                // Draw segment by segment, each with its midpoint color
+
+                                                var xs = [], ys = [];
+                                                for (var p = 0; p < pts.length; p++) {
+                                                    xs.push(xOf(pts[p].col));
+                                                    ys.push(yOf(pts[p].tempC));
+                                                }
+
+                                                // Catmull-Rom → bezier smoothing (same technique GNOME Weather-
+                                                // style graphs use) so the curve rounds through each point
+                                                // instead of joining them with straight segments.
+                                                function smoothTo(xs2, ys2) {
+                                                    for (var s = 0; s < xs2.length - 1; s++) {
+                                                        var sx0 = s > 0 ? xs2[s-1] : xs2[s], sy0 = s > 0 ? ys2[s-1] : ys2[s];
+                                                        var sx1 = xs2[s], sy1 = ys2[s], sx2 = xs2[s+1], sy2 = ys2[s+1];
+                                                        var sx3 = s+2 < xs2.length ? xs2[s+2] : sx2, sy3 = s+2 < xs2.length ? ys2[s+2] : sy2;
+                                                        ctx.bezierCurveTo(sx1 + (sx2-sx0)/6, sy1 + (sy2-sy0)/6,
+                                                                           sx2 - (sx3-sx1)/6, sy2 - (sy3-sy1)/6, sx2, sy2);
+                                                    }
+                                                }
+
+                                                // Horizontal color gradient sampled from the same per-temperature
+                                                // scale used for the value labels below, so the curve's color
+                                                // matches what the numbers already say.
+                                                var gx0 = xs[0], gx1 = xs[xs.length - 1];
+                                                if (gx1 <= gx0) gx1 = gx0 + 1;
+                                                var fillGrad = ctx.createLinearGradient(gx0, 0, gx1, 0);
+                                                var lineGrad = ctx.createLinearGradient(gx0, 0, gx1, 0);
+                                                var STOPS = Math.min(pts.length, 7);
+                                                for (var k = 0; k < STOPS; k++) {
+                                                    var off = STOPS === 1 ? 0 : k / (STOPS - 1);
+                                                    var c = tempColor(pts[Math.round(off * (pts.length - 1))].tempC);
+                                                    fillGrad.addColorStop(off, c);
+                                                    lineGrad.addColorStop(off, c);
+                                                }
+
+                                                // Filled area under the curve, flat-extended to the canvas'
+                                                // own left/right/bottom edges (not just the first/last point)
+                                                // so it always reaches the full width and washes all the way
+                                                // down behind the rows below.
+                                                ctx.beginPath();
+                                                ctx.moveTo(0, ys[0]);
+                                                ctx.lineTo(xs[0], ys[0]);
+                                                smoothTo(xs, ys);
+                                                ctx.lineTo(width, ys[ys.length - 1]);
+                                                ctx.lineTo(width, height);
+                                                ctx.lineTo(0, height);
+                                                ctx.closePath();
+                                                ctx.fillStyle = fillGrad;
+                                                ctx.fill();
+
+                                                // Fade the fill out with depth (destination-in mask) so the
+                                                // color is clearest right under the curve and dissolves away
+                                                // well before the bottom, instead of a flat wash competing
+                                                // with the rows of text.
+                                                ctx.globalCompositeOperation = "destination-in";
+                                                var vFade = ctx.createLinearGradient(0, 0, 0, height);
+                                                vFade.addColorStop(0, "rgba(255,255,255,0.4)");
+                                                vFade.addColorStop(Math.min(0.95, curveH / height + 0.15), "rgba(255,255,255,0.12)");
+                                                vFade.addColorStop(1, "rgba(255,255,255,0)");
+                                                ctx.fillStyle = vFade;
+                                                ctx.fillRect(0, 0, width, height);
+                                                ctx.globalCompositeOperation = "source-over";
+
+                                                // The curve itself, flat-extended to the true left/right
+                                                // edges too (matching the fill), drawn on top.
+                                                ctx.beginPath();
+                                                ctx.moveTo(0, ys[0]);
+                                                ctx.lineTo(xs[0], ys[0]);
+                                                smoothTo(xs, ys);
+                                                ctx.lineTo(width, ys[ys.length - 1]);
                                                 ctx.lineWidth = 2.5;
                                                 ctx.lineJoin = "round";
                                                 ctx.lineCap = "round";
-                                                for (var j = 1; j < pts.length; j++) {
-                                                    var x0 = xOf(pts[j-1].col), y0 = yOf(pts[j-1].tempC);
-                                                    var x1 = xOf(pts[j].col),   y1 = yOf(pts[j].tempC);
-                                                    var grad = ctx.createLinearGradient(x0, y0, x1, y1);
-                                                    grad.addColorStop(0, tempColor(pts[j-1].tempC));
-                                                    grad.addColorStop(1, tempColor(pts[j].tempC));
-                                                    ctx.strokeStyle = grad;
-                                                    ctx.beginPath();
-                                                    ctx.moveTo(x0, y0);
-                                                    ctx.lineTo(x1, y1);
-                                                    ctx.stroke();
-                                                }
-                                                // Dots colored by temp
-                                                for (var k = 0; k < pts.length; k++) {
-                                                    ctx.fillStyle = tempColor(pts[k].tempC);
-                                                    ctx.beginPath();
-                                                    ctx.arc(xOf(pts[k].col), yOf(pts[k].tempC), 3, 0, Math.PI * 2);
-                                                    ctx.fill();
-                                                }
+                                                ctx.strokeStyle = lineGrad;
+                                                ctx.stroke();
                                             }
                                         }
 
                                         // ── Row 2: temperature labels ────────────────
                                         Row {
                                             id: stripTempRow
-                                            x: 0; y: trendCanvas.y + trendCanvas.height + 2
+                                            x: 0; y: trendCanvas.y + stripScrollView._graphNominalHeight + 2
                                             spacing: stripScrollView.colSpacing
                                             Repeater {
                                                 model: stripScrollView._hourlyWithSun
                                                 delegate: Item {
                                                     required property var modelData
                                                     width: stripScrollView.colW
-                                                    height: 18
+                                                    height: 32
+                                                    opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
                                                     Label {
                                                         anchors.centerIn: parent
                                                         text: (modelData.isSunrise || modelData.isSunset) ? i18n(modelData.isSunrise ? "Sunrise" : "Sunset")
                                                               : (weatherRoot ? weatherRoot.tempValue(modelData.tempC) : "--")
                                                         color: forecastRoot.themeTextColor
-                                                        font: weatherRoot ? weatherRoot.wf(10, !(modelData.isSunrise || modelData.isSunset)) : Qt.font({})
+                                                        font: (modelData.isSunrise || modelData.isSunset)
+                                                              ? (weatherRoot ? weatherRoot.wf(10, false) : Qt.font({}))
+                                                              : Qt.font({ family: Kirigami.Theme.defaultFont.family, pixelSize: 20, bold: true })
                                                         opacity: (modelData.isSunrise || modelData.isSunset) ? 0.75 : 1.0
                                                     }
                                                 }
@@ -1106,6 +1262,7 @@ Item {
                                         // ── Row 3: precipitation ─────────────────────
                                         Row {
                                             id: stripPrecipRow
+                                            visible: forecastRoot._hourlyShowPrecipProb
                                             x: 0; y: stripTempRow.y + stripTempRow.height + 2
                                             spacing: stripScrollView.colSpacing
                                             Repeater {
@@ -1115,15 +1272,14 @@ Item {
                                                     readonly property bool _isSun: modelData.isSunrise === true || modelData.isSunset === true
                                                     width: stripScrollView.colW
                                                     height: 18
+                                                    opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
                                                     spacing: 2
                                                     Item { Layout.fillWidth: true }
                                                     WeatherIcon {
                                                         visible: !parent._isSun
-                                                        iconInfo: IconResolver.resolve("umbrella", 16, forecastRoot.iconsBaseDir,
-                                                            forecastRoot.widgetIconTheme === "kde" ? "flat-color" :
-                                                            (forecastRoot.widgetIconTheme === "wi-font" || forecastRoot.widgetIconTheme === "custom") ? "symbolic" : forecastRoot.widgetIconTheme)
+                                                        iconInfo: IconResolver.resolve("umbrella", 16, forecastRoot.iconsBaseDir, forecastRoot.itemsIconTheme)
                                                         iconSize: 16
-                                                        iconColor: "#7ec8e3"
+                                                        iconColor: forecastRoot.themeTextColor
                                                         Layout.alignment: Qt.AlignVCenter
                                                     }
                                                     Label {
@@ -1148,7 +1304,7 @@ Item {
                                         // ── Row 4: wind ───────────────────────────────
                                         Row {
                                             id: stripWindRow
-                                            x: 0; y: stripPrecipRow.y + stripPrecipRow.height + 2
+                                            x: 0; y: stripPrecipRow.visible ? (stripPrecipRow.y + stripPrecipRow.height + 2) : stripPrecipRow.y
                                             height: 28
                                             visible: forecastRoot._hourlyShowWind
                                             spacing: stripScrollView.colSpacing
@@ -1159,6 +1315,7 @@ Item {
                                                     readonly property bool _isSun: modelData.isSunrise === true || modelData.isSunset === true
                                                     width: stripScrollView.colW
                                                     height: 28
+                                                    opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
                                                     RowLayout {
                                                         anchors.centerIn: parent
                                                         spacing: 2
@@ -1195,6 +1352,7 @@ Item {
                                                     readonly property bool _isSun: modelData.isSunrise === true || modelData.isSunset === true
                                                     width: stripScrollView.colW
                                                     height: 18
+                                                    opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
                                                     spacing: 2
                                                     Item { Layout.fillWidth: true }
                                                     WeatherIcon {
@@ -1231,6 +1389,7 @@ Item {
                                                     readonly property bool _isSun: modelData.isSunrise === true || modelData.isSunset === true
                                                     width: stripScrollView.colW
                                                     height: 18
+                                                    opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
                                                     spacing: 2
                                                     Item { Layout.fillWidth: true }
                                                     WeatherIcon {
@@ -1274,6 +1433,7 @@ Item {
                                                     readonly property bool _isSun: modelData.isSunrise === true || modelData.isSunset === true
                                                     width: stripScrollView.colW
                                                     height: 18
+                                                    opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
                                                     spacing: 2
                                                     Item { Layout.fillWidth: true }
                                                     WeatherIcon {
@@ -1314,6 +1474,7 @@ Item {
                                                     readonly property bool _isSun: modelData.isSunrise === true || modelData.isSunset === true
                                                     width: stripScrollView.colW
                                                     height: 18
+                                                    opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
                                                     spacing: 2
                                                     Item { Layout.fillWidth: true }
                                                     WeatherIcon {
@@ -1350,6 +1511,7 @@ Item {
                                                     readonly property bool _isSun: modelData.isSunrise === true || modelData.isSunset === true
                                                     width: stripScrollView.colW
                                                     height: 18
+                                                    opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
                                                     spacing: 2
                                                     Item { Layout.fillWidth: true }
                                                     WeatherIcon {
@@ -1363,6 +1525,50 @@ Item {
                                                     Label {
                                                         visible: !parent._isSun
                                                         text: weatherRoot ? weatherRoot.visibilityValue(modelData.visibilityKm) : "--"
+                                                        color: forecastRoot.themeTextColor
+                                                        font: weatherRoot ? weatherRoot.wf(10, false) : Qt.font({})
+                                                        opacity: 0.7
+                                                        Layout.alignment: Qt.AlignVCenter
+                                                    }
+                                                    Item { Layout.fillWidth: true }
+                                                }
+                                            }
+                                        }
+
+                                        // ── Row 10: automatic precip amount ────────────
+                                        // Mirrors the cards layout: shown only while an hour is
+                                        // actively precipitating (trace amounts on a dry-coded hour
+                                        // are skipped so it doesn't contradict a sunny icon at 0%),
+                                        // and skipped row-wide when the explicit precip-sum stat is
+                                        // on, since the two would show the same amount.
+                                        Row {
+                                            id: stripPrecipRateRow
+                                            x: 0; y: stripVisibilityRow.visible ? (stripVisibilityRow.y + stripVisibilityRow.height + 2) : stripVisibilityRow.y
+                                            visible: !forecastRoot._hourlyShowPrecipSum
+                                            spacing: stripScrollView.colSpacing
+                                            Repeater {
+                                                model: stripScrollView._hourlyWithSun
+                                                delegate: RowLayout {
+                                                    required property var modelData
+                                                    readonly property bool _isSun: modelData.isSunrise === true || modelData.isSunset === true
+                                                    readonly property bool _hasRate: modelData.precipMm !== undefined && !isNaN(modelData.precipMm)
+                                                                                      && modelData.precipMm > 0 && W.isPrecipCode(modelData.code)
+                                                    width: stripScrollView.colW
+                                                    height: 18
+                                                    opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
+                                                    spacing: 2
+                                                    Item { Layout.fillWidth: true }
+                                                    WeatherIcon {
+                                                        visible: !parent._isSun && parent._hasRate
+                                                        iconInfo: IconResolver.resolve("preciprate", 16, forecastRoot.iconsBaseDir, forecastRoot.itemsIconTheme)
+                                                        iconSize: 16
+                                                        iconColor: forecastRoot.themeTextColor
+                                                        opacity: 0.7
+                                                        Layout.alignment: Qt.AlignVCenter
+                                                    }
+                                                    Label {
+                                                        visible: !parent._isSun && parent._hasRate
+                                                        text: weatherRoot ? weatherRoot.precipValue(modelData.precipMm) : "--"
                                                         color: forecastRoot.themeTextColor
                                                         font: weatherRoot ? weatherRoot.wf(10, false) : Qt.font({})
                                                         opacity: 0.7
@@ -1395,6 +1601,77 @@ Item {
                                             wheel.accepted = true;
                                         } else {
                                             wheel.accepted = forecastRoot._scrollParentVertically(wheel);
+                                        }
+                                    }
+                                }
+
+                                // ── Chevron paging buttons (GNOME Weather-style) ──
+                                // Siblings of the Flickable (not scrolled children of it), so
+                                // they stay put at the strip's edges while the content pans
+                                // underneath. Each pages by one viewport-width using the same
+                                // animation the wheel handler above already drives.
+                                Rectangle {
+                                    id: stripLeftChevron
+                                    visible: !stripScrollView.atXBeginning
+                                    anchors.left: parent.left
+                                    anchors.leftMargin: 4
+                                    anchors.top: stripIconRow.bottom
+                                    anchors.topMargin: 2 + stripScrollView._graphNominalHeight / 2 - height / 2
+                                    width: 26
+                                    height: 26
+                                    radius: width / 2
+                                    color: "black"
+                                    opacity: leftChevronArea.containsMouse ? 0.7 : 0.45
+                                    Behavior on opacity { NumberAnimation { duration: 120 } }
+                                    Kirigami.Icon {
+                                        anchors.centerIn: parent
+                                        source: "arrow-left"
+                                        width: 14
+                                        height: 14
+                                        color: "white"
+                                    }
+                                    MouseArea {
+                                        id: leftChevronArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            var target = Math.max(0, stripScrollView.contentX - stripScrollView.width);
+                                            stripWheelAnimation.to = target;
+                                            stripWheelAnimation.restart();
+                                        }
+                                    }
+                                }
+                                Rectangle {
+                                    id: stripRightChevron
+                                    visible: !stripScrollView.atXEnd
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 4
+                                    anchors.top: stripIconRow.bottom
+                                    anchors.topMargin: 2 + stripScrollView._graphNominalHeight / 2 - height / 2
+                                    width: 26
+                                    height: 26
+                                    radius: width / 2
+                                    color: "black"
+                                    opacity: rightChevronArea.containsMouse ? 0.7 : 0.45
+                                    Behavior on opacity { NumberAnimation { duration: 120 } }
+                                    Kirigami.Icon {
+                                        anchors.centerIn: parent
+                                        source: "arrow-right"
+                                        width: 14
+                                        height: 14
+                                        color: "white"
+                                    }
+                                    MouseArea {
+                                        id: rightChevronArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            var maxX = Math.max(0, stripScrollView.contentWidth - stripScrollView.width);
+                                            var target = Math.min(maxX, stripScrollView.contentX + stripScrollView.width);
+                                            stripWheelAnimation.to = target;
+                                            stripWheelAnimation.restart();
                                         }
                                     }
                                 }
@@ -1464,8 +1741,8 @@ Item {
                                                 if (rise >= 0 && targetMins >= 0 && rise < targetMins) closestIdx++;
                                                 if (set_ >= 0 && targetMins >= 0 && set_ < targetMins) closestIdx++;
                                             }
-                                            var hourlyWidth = forecastRoot._hourlyCardWidth;
-                                            var sunWidth = 70;
+                                            var hourlyWidth = hourlyRow._stretchedCardWidth;
+                                            var sunWidth = hourlyRow._sunCardWidth;
                                             var spacing = 6;
                                             var scrollPos = 0;
                                             if (forecastRoot.showSunEvents && _daySunriseText && _daySunsetText) {
@@ -1516,15 +1793,33 @@ Item {
                                                 if (!t || t === "--") return -1;
                                                 var p = t.split(":"); return p.length < 2 ? -1 : parseInt(p[0],10)*60+parseInt(p[1],10);
                                             }
-                                            // For today (index 0) filter out past hours; keep 1 hour buffer
+                                            // For today (index 0), hours before "now" (minus a 1 hour buffer so
+                                            // the current hour stays visible) are either dropped, or - when
+                                            // forecastShowPastHours is enabled - kept at their normal position and
+                                            // flagged isPast so the delegate can grey them out instead.
+                                            // The appended closing entry (isNextDay - the following day's 00:00,
+                                            // see the provider fetchers) reads as minutes=0 same as a just-past
+                                            // midnight hour, so it's exempted here - otherwise it would always
+                                            // look "in the past" and get filtered/greyed out of "today".
                                             var nowMins = -1;
                                             if (index === 0) {
                                                 var _now = new Date();
                                                 nowMins = _now.getHours() * 60 + _now.getMinutes() - 60;
                                             }
-                                            var source = nowMins >= 0
-                                                ? _dayHourlyData.filter(function(h) { var m = toMins(h.hour); return m < 0 || m >= nowMins; })
-                                                : _dayHourlyData;
+                                            var source;
+                                            if (forecastRoot.showPastHoursGreyed) {
+                                                source = nowMins >= 0
+                                                    ? _dayHourlyData.map(function(h) {
+                                                          var m = toMins(h.hour);
+                                                          var isPast = h.isNextDay !== true && m >= 0 && m < nowMins;
+                                                          return isPast ? Object.assign({}, h, { isPast: true }) : h;
+                                                      })
+                                                    : _dayHourlyData;
+                                            } else {
+                                                source = nowMins >= 0
+                                                    ? _dayHourlyData.filter(function(h) { var m = toMins(h.hour); return h.isNextDay === true || m < 0 || m >= nowMins; })
+                                                    : _dayHourlyData;
+                                            }
                                             if (!forecastRoot.showSunEvents)
                                                 return source;
                                             var rise = toMins(_daySunriseText);
@@ -1547,15 +1842,39 @@ Item {
                                             return result;
                                         }
 
+                                        readonly property int _sunCardWidth: 70
+                                        readonly property int _sunCount: {
+                                            var c = 0;
+                                            for (var i = 0; i < _hourlyWithSun.length; i++) {
+                                                if (_hourlyWithSun[i].isSunrise || _hourlyWithSun[i].isSunset) c++;
+                                            }
+                                            return c;
+                                        }
+                                        readonly property int _regularCount: _hourlyWithSun.length - _sunCount
+                                        // Fill the available width evenly across the regular hourly
+                                        // cards when there are few enough hours that the fixed base
+                                        // card width would leave blank space on the right; fall back
+                                        // to that fixed minimum (and horizontal scrolling) once more
+                                        // cards are needed than fit at it.
+                                        readonly property int _stretchedCardWidth: {
+                                            if (_regularCount <= 0 || hourlyScrollView.width <= 0)
+                                                return forecastRoot._hourlyCardWidth;
+                                            var totalSpacing = spacing * Math.max(0, _hourlyWithSun.length - 1);
+                                            var avail = hourlyScrollView.width - totalSpacing - (_sunCount * _sunCardWidth);
+                                            var fitW = Math.floor(avail / _regularCount);
+                                            return Math.max(forecastRoot._hourlyCardWidth, fitW);
+                                        }
+
                                         Repeater {
                                             model: parent._hourlyWithSun
 
                                             delegate: Rectangle {
                                                 required property var modelData
                                                 // Sunrise/sunset cards are slim; hourly cards are full height
-                                                width: (modelData.isSunrise || modelData.isSunset) ? 70 : forecastRoot._hourlyCardWidth
+                                                width: (modelData.isSunrise || modelData.isSunset) ? hourlyRow._sunCardWidth : hourlyRow._stretchedCardWidth
                                                 height: forecastRoot._hourlyCardHeight
                                                 radius: 8
+                                                opacity: modelData.isPast === true ? forecastRoot._pastHourOpacity : 1.0
                                                 color: (modelData.isSunrise || modelData.isSunset)
                                                     ? Qt.rgba(forecastRoot.themeTextColor.r, forecastRoot.themeTextColor.g, forecastRoot.themeTextColor.b, 0.04)
                                                     : Qt.rgba(forecastRoot.themeTextColor.r, forecastRoot.themeTextColor.g, forecastRoot.themeTextColor.b, 0.08)
@@ -1582,8 +1901,7 @@ Item {
                                                                     modelData.isSunrise ? "sunrise" : "sunset",
                                                                     32,
                                                                     forecastRoot.iconsBaseDir,
-                                                                    forecastRoot.widgetIconTheme === "kde" ? "flat-color" :
-                                                                    (forecastRoot.widgetIconTheme === "wi-font" || forecastRoot.widgetIconTheme === "custom" || forecastRoot.widgetIconTheme === "kde-symbolic") ? "symbolic" : forecastRoot.widgetIconTheme)
+                                                                    forecastRoot.itemsIconTheme)
                                                                 iconSize: 32
                                                                 iconColor: forecastRoot.themeTextColor
                                                             }
@@ -1778,12 +2096,11 @@ Item {
                                                             }
 
                                                             RowLayout {
+                                                                visible: forecastRoot._hourlyShowPrecipProb
                                                                 Layout.alignment: Qt.AlignHCenter
                                                                 spacing: 3
                                                                 WeatherIcon {
-                                                                    iconInfo: IconResolver.resolve("umbrella", 32, forecastRoot.iconsBaseDir,
-                                                                        forecastRoot.widgetIconTheme === "kde" ? "flat-color" :
-                                                                        (forecastRoot.widgetIconTheme === "wi-font" || forecastRoot.widgetIconTheme === "custom" || forecastRoot.widgetIconTheme === "kde-symbolic") ? "symbolic" : forecastRoot.widgetIconTheme)
+                                                                    iconInfo: IconResolver.resolve("umbrella", 32, forecastRoot.iconsBaseDir, forecastRoot.itemsIconTheme)
                                                                     iconSize: 32
                                                                     iconColor: forecastRoot.themeTextColor
                                                                     Layout.alignment: Qt.AlignVCenter
@@ -1807,12 +2124,13 @@ Item {
                                                                 // for an hour whose weather code and probability are dry.
                                                                 // Only show the rate when the code itself implies precipitation,
                                                                 // so it doesn't contradict a clear/sunny icon at 0% probability.
-                                                                visible: modelData.precipMm !== undefined && !isNaN(modelData.precipMm)
+                                                                // Skipped entirely when the explicit precip-sum stat below is
+                                                                // already on, since the two show the same amount.
+                                                                visible: !forecastRoot._hourlyShowPrecipSum
+                                                                         && modelData.precipMm !== undefined && !isNaN(modelData.precipMm)
                                                                          && modelData.precipMm > 0 && W.isPrecipCode(modelData.code)
                                                                 WeatherIcon {
-                                                                    iconInfo: IconResolver.resolve("preciprate", 32, forecastRoot.iconsBaseDir,
-                                                                        forecastRoot.widgetIconTheme === "kde" ? "flat-color" :
-                                                                        (forecastRoot.widgetIconTheme === "wi-font" || forecastRoot.widgetIconTheme === "custom" || forecastRoot.widgetIconTheme === "kde-symbolic") ? "symbolic" : forecastRoot.widgetIconTheme)
+                                                                    iconInfo: IconResolver.resolve("preciprate", 32, forecastRoot.iconsBaseDir, forecastRoot.itemsIconTheme)
                                                                     iconSize: 32
                                                                     iconColor: forecastRoot.themeTextColor
                                                                     opacity: 0.6

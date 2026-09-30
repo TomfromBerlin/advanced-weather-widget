@@ -5,24 +5,26 @@
 
 |  Locale  |  Lines  | % Done|
 |----------|---------|-------|
-| Template |     962 |       |
-| bg       | 899/962 |   93% |
-| cs_CZ    | 822/962 |   85% |
-| de       | 909/962 |   94% |
-| es       | 899/962 |   93% |
-| fr       | 899/962 |   93% |
-| hu_HU    | 909/962 |   94% |
-| it_IT    | 909/962 |   94% |
-| ja_JP    | 899/962 |   93% |
-| ko_KR    | 899/962 |   93% |
-| nl       | 899/962 |   93% |
-| pl_PL    | 899/962 |   93% |
-| pt_BR    | 287/962 |   29% |
-| ru       | 902/962 |   93% |
-| tr_TR    | 883/962 |   91% |
-| uk       | 897/962 |   93% |
-| zh_CN    | 899/962 |   93% |
-| zh_TW    | 909/962 |   94% |
+| Template |    1031 |       |
+| bg       | 1031/1031 |  100% |
+| cs_CZ    | 816/1031 |   79% |
+| de       | 952/1031 |   92% |
+| es       | 890/1031 |   86% |
+| fr       | 984/1031 |   95% |
+| hu_HU    | 952/1031 |   92% |
+| it_IT    | 952/1031 |   92% |
+| ja_JP    | 953/1031 |   92% |
+| ko_KR    | 890/1031 |   86% |
+| nl       | 890/1031 |   86% |
+| pl_PL    | 890/1031 |   86% |
+| pt_BR    | 284/1031 |   27% |
+| ru       | 893/1031 |   86% |
+| sv_SE    | 953/1031 |   92% |
+| tr_TR    | 875/1031 |   84% |
+| uk       | 889/1031 |   86% |
+| zh_CN    | 890/1031 |   86% |
+| zh_TW    | 900/1031 |   87% |
+
 
 Translations are welcome! If you would like to help translate the widget into your language, please follow the instructions below.
 
@@ -83,3 +85,4 @@ Thank you to everyone who contributed translations to this project ❤️
 - **Ukrainian** - [NaviMen (Oleksandr)](https://github.com/NaviMen)
 - **Japanese** - [presire](https://github.com/presire)
 - **Korean** - [vitneum](https://github.com/vitneum)
+- **Swedish** - [tonikarppi](https://github.com/tonikarppi)
