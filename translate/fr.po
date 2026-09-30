@@ -8,7 +8,7 @@ msgstr ""
 "Report-Msgid-Bugs-To: https://github.com/pnedyalkov91/advanced-weather-widget/issues\n"
 "POT-Creation-Date: 2026-09-30 08:15+0300\n"
 "PO-Revision-Date: 2026-08-04 09:53+0200\n"
-"Last-Translator: rcspam <rcspams@gmail.com>\n"
+"Last-Translator: rcspam\n"
 "Language-Team: French\n"
 "Language: fr\n"
 "MIME-Version: 1.0\n"
@@ -140,6 +140,8 @@ msgid ""
 "<b>Hybrid-GPU / NVIDIA PRIME + Wayland crash workaround</b><br/><br/>On some hybrid-GPU laptops running Wayland, the Radar tab's embedded browser view can crash the whole Plasma shell the moment it first paints, due to a driver-level conflict between the two GPUs. This option disables GPU-accelerated compositing inside that browser view to avoid it.<br/><br/>Only enable this if you're actually experiencing that crash - it costs some rendering performance on the radar map.<br/><br/><b>This needs a log out and back in to take effect</b>, since it has to be set before Plasma starts. It also applies to the whole session, so any other app that embeds a Chromium-based browser view will pick up the same setting. Turning it back off later needs the same log out/in to fully clear it too.\n"
 "        <br/><br/>If you enable this option, the following file will be created in: ~/.config/plasma-workspace/env/advanced-weather-widget-radar-gpu-workaround.sh"
 msgstr ""
+"<b>Contournement des plantages GPU hybride / NVIDIA PRIME + Wayland</b><br/><br/>Sur certains ordinateurs portables à GPU hybride sous Wayland, la vue de navigateur intégrée à l'onglet Radar peut faire planter tout l'environnement Plasma dès son premier affichage, en raison d'un conflit entre les deux GPU au niveau du pilote. Cette option désactive la composition accélérée par le GPU dans cette vue de navigateur afin de l'éviter.<br/><br/>N'activez cette option que si vous rencontrez réellement ce plantage - elle réduit les performances de rendu de la carte radar.<br/><br/><b>Une déconnexion puis une reconnexion sont nécessaires pour que le changement prenne effet</b>, car le paramètre doit être défini avant le démarrage de Plasma. Il s'applique également à toute la session : toute autre application intégrant une vue de navigateur basée sur Chromium utilisera le même paramètre. Pour le désactiver ensuite, il faudra de même se déconnecter puis se reconnecter afin de l'effacer complètement.\n"
+"        <br/><br/>Si vous activez cette option, le fichier suivant sera créé dans : ~/.config/plasma-workspace/env/advanced-weather-widget-radar-gpu-workaround.sh"
 
 #: contents/ui/main.qml:1392
 msgid "<b>Instruction:</b> %1"
@@ -164,40 +166,40 @@ msgstr "<b>Pourquoi les couches OWM peuvent ne pas correspondre au radar RainVie
 
 #: contents/ui/config/configGeneral.qml:596
 msgid "AEMET - Spain only (Key Required)"
-msgstr ""
+msgstr "AEMET - Espagne uniquement (clé requise)"
 
 #: contents/ui/config/tabs/ConfigProviderTab.qml:201
 msgid "AEMET API Key:"
-msgstr ""
+msgstr "Clé API AEMET :"
 
 #: contents/ui/config/configGeneral.qml:393
 #: contents/ui/config/configGeneral.qml:522
 msgid "AEMET error (code %1). Check your API key."
-msgstr ""
+msgstr "Erreur AEMET (code %1). Vérifiez votre clé API."
 
 #: contents/ui/config/configGeneral.qml:361
 msgid "AEMET only covers Spain - this location has no coverage."
-msgstr ""
+msgstr "AEMET ne couvre que l'Espagne - cette localisation n'est pas couverte."
 
 #: contents/ui/config/tabs/ConfigProviderTab.qml:382
 msgid "AEMET only covers locations in Spain - other locations show \"Failed\" rather than switching provider (it's intentionally left out of Adaptive Mode too, since it's the one provider here with its own request limit). There is a limit on the number of requests to the AEMET API per minute, so don't click the refresh button too many times, as you may hit the limit and have to wait at least 1 minute before making another request.A failed request retries automatically once.<br/><br/>Fields AEMET doesn't publish at all - pressure, visibility, snow cover, and a daily accumulated precipitation total - show as \"N/A\" here rather than a bug. UV is a daily figure only, not hour-by-hour, and wind can be missing for days further out where AEMET's own forecast confidence drops off.<br/><br/>Free key: <a href='https://opendata.aemet.es/centrodedescargas/altaUsuario'>opendata.aemet.es</a>. New keys expire 3 months after creation (AEMET's policy, changed July 2026) - you'll need to request a new one when that happens.<br/><br/>Please don't refresh too often, as AEMET has a request limit per minute. If you hit it, you'll have to wait at least 1 minute before making another request."
-msgstr ""
+msgstr "AEMET ne couvre que l'Espagne : ailleurs, le widget affiche « Échoué » au lieu de changer de fournisseur (AEMET est aussi volontairement exclu du mode Adaptatif, car c'est le seul fournisseur ici qui a sa propre limite de requêtes). Le nombre de requêtes à l'API AEMET est limité par minute : ne cliquez pas trop souvent sur le bouton d'actualisation, sinon vous risquez d'atteindre la limite et de devoir attendre au moins 1 minute avant une nouvelle requête. Une requête échouée est relancée automatiquement une fois.<br/><br/>Les champs qu'AEMET ne publie pas du tout (pression, visibilité, couverture neigeuse et cumul quotidien des précipitations) s'affichent « N/D » ici, ce n'est pas un bug. L'UV n'est qu'une valeur quotidienne, pas heure par heure, et le vent peut manquer pour les jours lointains, là où la fiabilité des prévisions d'AEMET baisse.<br/><br/>Clé gratuite : <a href='https://opendata.aemet.es/centrodedescargas/altaUsuario'>opendata.aemet.es</a>. Les nouvelles clés expirent 3 mois après leur création (politique d'AEMET, modifiée en juillet 2026) : il faudra alors en demander une nouvelle.<br/><br/>Merci de ne pas actualiser trop souvent, car AEMET limite le nombre de requêtes par minute. Si vous atteignez cette limite, vous devrez attendre au moins 1 minute avant une nouvelle requête."
 
 #: contents/ui/ForecastView.qml:867
 msgid "AEMET provides hourly forecasts for up to 48 hours. Daily forecast is still available for this date."
-msgstr ""
+msgstr "AEMET fournit des prévisions horaires jusqu'à 48 heures. Les prévisions quotidiennes restent disponibles pour cette date."
 
 #: contents/ui/WeatherService.qml:1094
 msgid "AEMET: request failed - retrying automatically."
-msgstr ""
+msgstr "AEMET : échec de la requête, nouvel essai automatique."
 
 #: contents/ui/WeatherService.qml:1091
 msgid "AEMET: request limit reached - retrying automatically in a minute."
-msgstr ""
+msgstr "AEMET : limite de requêtes atteinte, nouvel essai automatique dans une minute."
 
 #: contents/ui/ForecastView.qml:869
 msgid "AEMET: request limit reached for the moment. This will retry automatically - please wait a minute."
-msgstr ""
+msgstr "AEMET : limite de requêtes atteinte pour le moment. Un nouvel essai aura lieu automatiquement, patientez une minute."
 
 #: contents/ui/config/tabs/ConfigProviderTab.qml:145
 msgid "AI-powered weather intelligence. API key required below."
@@ -364,11 +366,11 @@ msgstr "Tous les onglets"
 
 #: contents/ui/config/tabs/ConfigWidgetTab.qml:890
 msgid "Already-passed hours are removed from today's hourly forecast"
-msgstr ""
+msgstr "Les heures déjà passées sont retirées des prévisions horaires du jour"
 
 #: contents/ui/config/tabs/ConfigWidgetTab.qml:889
 msgid "Already-passed hours for today stay in place, greyed out, instead of being removed"
-msgstr ""
+msgstr "Les heures déjà passées du jour restent affichées, grisées, au lieu d'être retirées"
 
 #: contents/ui/config/subpages/ConfigLocationSubPage.qml:371
 msgid "Alt: %1 %2"
@@ -432,15 +434,15 @@ msgstr "Appliquer la localisation détectée"
 
 #: contents/ui/config/configAppearance.qml:490
 msgid "Apply everywhere"
-msgstr ""
+msgstr "Appliquer partout"
 
 #: contents/ui/config/configAppearance.qml:402
 msgid "Apply icon theme"
-msgstr ""
+msgstr "Appliquer le thème d'icônes"
 
 #: contents/ui/config/configAppearance.qml:498
 msgid "Apply only here"
-msgstr ""
+msgstr "Appliquer ici uniquement"
 
 #: contents/ui/config/configLocation.qml:1380
 msgid "Are you sure? This is your last saved location. If you remove it, the widget will no longer show weather information."
@@ -1211,7 +1213,7 @@ msgstr "Entrer manuellement"
 
 #: contents/ui/config/tabs/ConfigProviderTab.qml:231
 msgid "Enter your AEMET API key"
-msgstr ""
+msgstr "Entrer votre clé API AEMET"
 
 #: contents/ui/config/tabs/ConfigProviderTab.qml:217
 msgid "Enter your OpenWeatherMap API key"
@@ -1377,7 +1379,7 @@ msgstr "Brouillard"
 
 #: contents/ui/config/configAppearance.qml:259
 msgid "Font icons"
-msgstr ""
+msgstr "Police d'icônes"
 
 #: contents/ui/config/tabs/ConfigPanelTab.qml:1163
 #: contents/ui/config/tabs/ConfigTooltipTab.qml:209
@@ -1700,8 +1702,7 @@ msgid ""
 "Individual dropdowns are editable only in Custom mode.\n"
 "Other presets set units automatically."
 msgstr ""
-"Les listes déroulantes ne sont modifiables qu'en mode personnalisé.\n"
-"Les autres préréglages définissent les unités automatiquement.Les menus déroulants individuels ne sont modifiables qu'en mode personnalisé.\n"
+"Les menus déroulants individuels ne sont modifiables qu'en mode personnalisé.\n"
 "Les autres préréglages définissent automatiquement les unités."
 
 #: contents/ui/config/tabs/ConfigMiscTab.qml:216
@@ -1717,12 +1718,7 @@ msgid ""
 "\n"
 "You can still search for a location or enter coordinates manually. Note that auto-detection will continue to work using an IP fallback, but it may be less accurate and won’t update in real time as you move around."
 msgstr ""
-"L'installer selon votre distribution :\n"
-"  • Fedora / RHEL / Arch : qt6-qtlocation\n"
-"  • openSUSE : qt6-location\n"
-"  • Debian / Kubuntu / KDE Neon : qml6-module-qtlocation et qml6-module-qtpositioning\n"
-"\n"
-"Vous pouvez toujours rechercher un lieu ou saisir des coordonnées manuellement. La détection automatique continue de fonctionner via une adresse IP, mais elle est moins précise et ne se met pas à jour en temps réel lors de vos déplacements.Installez-le pour votre distribution :\n"
+"Installez-le pour votre distribution :\n"
 "  • Fedora / RHEL / Arch : qt6-qtlocation\n"
 "  • openSUSE : qt6-location\n"
 "  • Debian / Kubuntu / KDE Neon : qml6-module-qtlocation et qml6-module-qtpositioning\n"
@@ -1736,10 +1732,7 @@ msgid ""
 "- openSUSE / Arch: qt6-webengine\n"
 "- Debian / Kubuntu / KDE Neon: qml6-module-qtwebengine"
 msgstr ""
-"L'installer selon votre distribution :\n"
-"- Fedora / RHEL : qt6-qtwebengine\n"
-"- openSUSE / Arch : qt6-webengine\n"
-"- Debian / Kubuntu / KDE Neon : qml6-module-qtwebengineInstallez-le pour votre distribution :\n"
+"Installez-le pour votre distribution :\n"
 "- Fedora / RHEL : qt6-qtwebengine\n"
 "- openSUSE / Arch : qt6-webengine\n"
 "- Debian / Kubuntu / KDE Neon : qml6-module-qtwebengine"
@@ -1767,7 +1760,7 @@ msgstr "Réponse invalide"
 #: contents/ui/config/configGeneral.qml:398
 #: contents/ui/config/configGeneral.qml:527
 msgid "Invalid response from AEMET."
-msgstr ""
+msgstr "Réponse invalide d'AEMET."
 
 #: contents/ui/config/configGeneral.qml:514
 msgid "Invalid response from QWeather."
@@ -1796,14 +1789,14 @@ msgstr "Thème d'icônes KDE"
 #: contents/ui/config/tabs/ConfigPanelTab.qml:316
 #: contents/ui/config/tabs/ConfigWidgetTab.qml:50
 msgid "KDE Icon Theme (Colorful)"
-msgstr ""
+msgstr "Thème d'icônes KDE (coloré)"
 
 #: contents/ui/config/configAppearance.qml:256
 #: contents/ui/config/tabs/ConfigPanelTab.qml:311
 #: contents/ui/config/tabs/ConfigPanelTab.qml:320
 #: contents/ui/config/tabs/ConfigWidgetTab.qml:51
 msgid "KDE Icon Theme (Symbolic)"
-msgstr ""
+msgstr "Thème d'icônes KDE (symbolique)"
 
 #: contents/ui/config/configAppearance.qml:903
 msgid "KDE System Icons (automatic, follows weather code)"
@@ -2516,19 +2509,19 @@ msgstr "OK"
 
 #: contents/ui/config/configGeneral.qml:143
 msgid "Off - the workaround script has been removed, so it won't load on your next login. This session already started with GPU compositing disabled though, and your system isn't systemd-managed, so there's no way to clear that live - it stays disabled (including anything you open freshly in this session) until you log out and back in."
-msgstr ""
+msgstr "Désactivé - le script de contournement a été supprimé et ne sera plus chargé à la prochaine connexion. Cette session a toutefois démarré avec la composition GPU désactivée, et votre système n'est pas géré par systemd : impossible de l'effacer à chaud. Elle reste désactivée (y compris pour ce que vous ouvrez maintenant dans cette session) jusqu'à ce que vous vous déconnectiez puis reconnectiez."
 
 #: contents/ui/config/configGeneral.qml:145
 msgid "Off - the workaround script has been removed, so it won't load on your next login. This session already started with GPU compositing disabled though, so it stays that way (and anything already open, like a terminal, keeps showing the old value) until you log out and back in."
-msgstr ""
+msgstr "Désactivé - le script de contournement a été supprimé et ne sera plus chargé à la prochaine connexion. Cette session a toutefois démarré avec la composition GPU désactivée : elle le reste (et ce qui est déjà ouvert, comme un terminal, garde l'ancienne valeur) jusqu'à ce que vous vous déconnectiez puis reconnectiez."
 
 #: contents/ui/config/configGeneral.qml:141
 msgid "Off - the workaround script has been removed, so it won't load on your next login. Your system uses systemd, so anything launched fresh from here on may already reflect the cleared value - but anything already open (like a terminal you still have up) keeps showing the old one regardless, and a full log out and back in is the only guaranteed way to clear it everywhere."
-msgstr ""
+msgstr "Désactivé - le script de contournement a été supprimé et ne sera plus chargé à la prochaine connexion. Votre système utilise systemd : ce que vous lancez à partir de maintenant peut déjà prendre en compte la valeur effacée. Mais ce qui est déjà ouvert (comme un terminal resté affiché) garde l'ancienne valeur, et seule une déconnexion puis reconnexion complète garantit de l'effacer partout."
 
 #: contents/ui/config/tabs/ConfigProviderTab.qml:153
 msgid "Official Spanish meteorological agency - Spain locations only! API key required below."
-msgstr ""
+msgstr "Agence météorologique officielle espagnole - localisations en Espagne uniquement ! Clé API requise ci-dessous."
 
 #: contents/ui/config/subpages/ConfigDetailsSubPage.qml:657
 #: contents/ui/DetailsView.qml:1526 contents/ui/main.qml:986
@@ -2662,15 +2655,15 @@ msgstr "Éléments du panneau :"
 
 #: contents/ui/config/configAppearance.qml:119
 msgid "Panel › Icon theme"
-msgstr ""
+msgstr "Panneau › Thème d'icônes"
 
 #: contents/ui/config/configAppearance.qml:163
 msgid "Panel › Multi-line layout › Main icon style"
-msgstr ""
+msgstr "Panneau › Multiligne › Style de l'icône principale"
 
 #: contents/ui/config/configAppearance.qml:133
 msgid "Panel › Simple layout › Weather icon style"
-msgstr ""
+msgstr "Panneau › Mode simple › Style d'icône météo"
 
 #: contents/ui/DetailsView.qml:1316
 msgid "Particulate Matter (PM10)"
@@ -2773,7 +2766,7 @@ msgstr "Cumul de précip."
 
 #: contents/ui/config/tabs/ConfigWidgetTab.qml:1024
 msgid "Precip probability:"
-msgstr ""
+msgstr "Probabilité de précipitations :"
 
 #: contents/ui/config/tabs/ConfigWidgetTab.qml:937
 #: contents/ui/config/tabs/ConfigWidgetTab.qml:1064
@@ -2876,6 +2869,10 @@ msgid ""
 " If you want to choose a specific provider, please turn off Adaptive Mode.\n"
 "Open-Meteo is always tried first - it is free and requires no API key. AEMET is intentionally not part of this list, as it only covers Spain and is not suitable for global use."
 msgstr ""
+"Les fournisseurs sont essayés dans l'ordre jusqu'à ce que l'un d'eux réussisse :\n"
+"Open-Meteo  →  BBC Weather  →  met.no  →  Pirate Weather  →  Visual Crossing  →  Tomorrow.io  →  StormGlass  →  Weatherbit  →  QWeather  →  OpenWeatherMap  →  WeatherAPI.com\n"
+" Pour choisir un fournisseur précis, désactivez le mode Adaptatif.\n"
+"Open-Meteo est toujours essayé en premier - il est gratuit et ne nécessite aucune clé API. AEMET est volontairement absent de cette liste, car il ne couvre que l'Espagne et ne convient pas à un usage mondial."
 
 #: contents/ui/config/configNotifications.qml:304
 #: contents/ui/config/configNotifications.qml:351
@@ -2927,7 +2924,7 @@ msgstr "Radar + Satellite"
 
 #: contents/ui/config/tabs/ConfigRadarTab.qml:39
 msgid "Radar Settings"
-msgstr ""
+msgstr "Paramètres du radar"
 
 #: contents/ui/config/tabs/ConfigWidgetTab.qml:253
 msgid "Radar only"
@@ -2984,7 +2981,7 @@ msgstr "Pluie/Orage"
 
 #: contents/ui/config/tabs/ConfigProviderTab.qml:120
 msgid "Read-only while Adaptive mode is on - turn it off above to choose a specific provider."
-msgstr ""
+msgstr "En lecture seule tant que le mode Adaptatif est actif - désactivez-le ci-dessus pour choisir un fournisseur précis."
 
 #: contents/ui/components/RadarWebEngineView.qml:158
 msgid "Real-time"
@@ -3197,7 +3194,7 @@ msgstr "Configurer ses propres icônes…"
 
 #: contents/ui/config/configAppearance.qml:480
 msgid "Settings where this theme is not available keep their current theme."
-msgstr ""
+msgstr "Les paramètres où ce thème n'est pas disponible conservent leur thème actuel."
 
 #: contents/ui/js/spaceWeather.js:92
 msgid "Severe geomagnetic storm."
@@ -3270,7 +3267,7 @@ msgstr "Afficher ou masquer cet élément de détail"
 
 #: contents/ui/config/tabs/ConfigWidgetTab.qml:880
 msgid "Show past weather info for today:"
-msgstr ""
+msgstr "Afficher la météo passée du jour :"
 
 #: contents/ui/config/subpages/ConfigDetailsSubPage.qml:626
 msgid "Show pollen types in expanded view:"
@@ -3673,11 +3670,11 @@ msgstr "Paramètres d'icône de la zone de notification"
 
 #: contents/ui/config/configAppearance.qml:119
 msgid "System tray › Icon theme"
-msgstr ""
+msgstr "Zone de notification › Thème d'icônes"
 
 #: contents/ui/config/configAppearance.qml:133
 msgid "System tray › Simple layout › Weather icon style"
-msgstr ""
+msgstr "Zone de notification › Mode simple › Style d'icône météo"
 
 #: contents/ui/components/RadarWebEngineView.qml:131
 #: contents/ui/config/configAppearance.qml:1798
@@ -3852,7 +3849,7 @@ msgstr "Fuseau horaire :"
 
 #: contents/ui/config/tabs/ConfigRadarTab.qml:258
 msgid "To unlock additional map layers (Rain, Clouds, Temperature, Wind, Pressure): disable Adaptive mode from the 'Provider' tab, select OpenWeatherMap as your weather provider, and enter your API key above. When you are ready, you can enable Adaptive mode again."
-msgstr ""
+msgstr "Pour débloquer des couches de carte supplémentaires (Pluie, Nuages, Température, Vent, Pression) : désactivez le mode Adaptatif dans l'onglet « Fournisseur », sélectionnez OpenWeatherMap comme fournisseur météo et saisissez votre clé API ci-dessus. Lorsque vous êtes prêt, vous pouvez réactiver le mode Adaptatif."
 
 #: contents/ui/ForecastView.qml:533 contents/ui/main.qml:1688
 #: contents/ui/SimpleView.qml:423
@@ -3920,7 +3917,7 @@ msgstr "Largeur de l'infobulle :"
 
 #: contents/ui/config/configAppearance.qml:225
 msgid "Tooltip › Icon theme"
-msgstr ""
+msgstr "Infobulle › Thème d'icônes"
 
 #: contents/ui/config/tabs/ConfigTooltipTab.qml:48
 msgid "Tooltip:"
@@ -4060,7 +4057,7 @@ msgstr "À venir : %1"
 
 #: contents/ui/WeatherService.qml:263
 msgid "Update timed out. Click the refresh button to retry."
-msgstr ""
+msgstr "Délai de mise à jour dépassé. Cliquez sur le bouton d'actualisation pour réessayer."
 
 #: contents/ui/WeatherService.qml:962
 msgid "Updated %1 day ago"
@@ -4211,7 +4208,7 @@ msgstr "Alertes météo"
 
 #: contents/ui/config/tabs/ConfigAlertsTab.qml:39
 msgid "Weather Alerts Provider"
-msgstr ""
+msgstr "Fournisseur d'alertes météo"
 
 #: contents/ui/config/tabs/ConfigProviderTab.qml:39
 msgid "Weather Provider"
@@ -4265,13 +4262,6 @@ msgid ""
 msgstr ""
 "Niveaux de gravité des alertes météo, du plus faible au plus élevé :\n"
 "\n"
-"🟡 Jaune, mineur : soyez attentif aux conditions.\n"
-"🟠 Orange, modéré : préparez-vous.\n"
-"🔴 Rouge, grave : agissez.\n"
-"🟣 Violet, extrême : danger exceptionnel, agissez immédiatement.\n"
-"\n"
-"Désactiver un niveau pour ne plus recevoir de notifications pour les alertes de cette gravité.Niveaux de gravité des alertes météo, du plus faible au plus élevé :\n"
-"\n"
 "🟡 Jaune - Mineur : soyez attentif aux conditions.\n"
 "🟠 Orange - Modéré : soyez prêt.\n"
 "🔴 Rouge - Sévère : agissez.\n"
@@ -4314,11 +4304,11 @@ msgstr "Zone du panneau du widget :"
 
 #: contents/ui/config/configAppearance.qml:210
 msgid "Widget › Details › Icon theme"
-msgstr ""
+msgstr "Widget › Détails › Thème d'icônes"
 
 #: contents/ui/config/configAppearance.qml:181
 msgid "Widget › General › Weather icon theme"
-msgstr ""
+msgstr "Widget › Général › Thème d'icônes météo"
 
 #: contents/ui/components/RadarWebEngineView.qml:132
 #: contents/ui/config/configAppearance.qml:1812
@@ -4397,7 +4387,7 @@ msgstr "Vous devrez peut-être augmenter la largeur du widget pour voir toutes l
 
 #: contents/ui/config/configAppearance.qml:435
 msgid "You selected <b>%1</b>. Apply it to every icon theme setting where it is available?"
-msgstr ""
+msgstr "Vous avez choisi <b>%1</b>. L'appliquer à tous les paramètres de thème d'icônes où il est disponible ?"
 
 #: contents/ui/config/subpages/ConfigMapSubPage.qml:490
 msgid "Zoom in"
@@ -4417,7 +4407,7 @@ msgstr "quelques nuages"
 
 #: contents/ui/config/configAppearance.qml:459
 msgid "already set"
-msgstr ""
+msgstr "déjà défini"
 
 #: contents/ui/main.qml:1942
 msgid "an increase from yesterday"
@@ -4582,7 +4572,7 @@ msgstr "mph"
 
 #: contents/ui/config/configAppearance.qml:459
 msgid "not available - left unchanged"
-msgstr ""
+msgstr "indisponible - inchangé"
 
 #: contents/ui/main.qml:1715
 msgid "overcast skies"
@@ -4612,7 +4602,7 @@ msgstr "pluie"
 
 #: contents/ui/config/configAppearance.qml:459
 msgid "selected here"
-msgstr ""
+msgstr "choisi ici"
 
 #: contents/ui/main.qml:1996
 msgid "severe"
@@ -4676,7 +4666,7 @@ msgstr "très élevé"
 
 #: contents/ui/config/configAppearance.qml:459
 msgid "will be changed"
-msgstr ""
+msgstr "sera modifié"
 
 #: contents/ui/main.qml:1335 contents/ui/main.qml:1686
 #: contents/ui/main.qml:1759
