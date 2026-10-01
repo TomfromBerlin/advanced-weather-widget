@@ -3714,7 +3714,7 @@ msgstr "Hőmérséklet:"
 
 #: contents/ui/config/configNotifications.qml:396
 msgid "Test"
-msgstr "Teszt"
+msgstr "Tesztelés"
 
 #: contents/ui/config/tabs/ConfigProviderTab.qml:335
 msgid "Test API Key"
